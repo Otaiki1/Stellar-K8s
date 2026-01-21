@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="logo.png" alt="Stellar-K8s Logo" width="200" />
+</p>
+
 # Stellar-K8s: Cloud-Native Stellar Infrastructure 🚀
 
 ![Rust](https://img.shields.io/badge/Built%20with-Rust-orange?style=for-the-badge&logo=rust) ![Kubernetes](https://img.shields.io/badge/Kubernetes-Operator-blue?style=for-the-badge&logo=kubernetes) ![License](https://img.shields.io/badge/License-Apache%202.0-green?style=for-the-badge) ![CI/CD](https://img.shields.io/github/actions/workflow/status/stellar/stellar-k8s/ci.yml?style=for-the-badge&label=Build)
