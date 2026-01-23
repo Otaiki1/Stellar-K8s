@@ -20,12 +20,13 @@ use kube::{
 };
 use tracing::{debug, error, info, instrument, warn};
 
-use crate::crd::{NodeType, StellarNode, Condition};
+use crate::crd::{NodeType, StellarNode, StellarNodeStatus, Condition};
 use crate::error::{Error, Result};
 
 use super::finalizers::STELLAR_NODE_FINALIZER;
 use super::health;
 use super::resources;
+use super::archive_health::{check_history_archive_health, calculate_backoff, ArchiveHealthResult};
 
 /// Shared state for the controller
 pub struct ControllerState {
@@ -106,45 +107,6 @@ async fn emit_event(
     Ok(())
 }
 
-/// Get the current retry count for archive health checks from annotations
-fn get_retry_count(node: &StellarNode) -> u32 {
-    node.metadata
-        .annotations
-        .as_ref()
-        .and_then(|a| a.get(ARCHIVE_RETRIES_ANNOTATION))
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(0)
-}
-
-/// Set the retry count for archive health checks in annotations
-async fn set_retry_count(client: &Client, node: &StellarNode, count: u32) -> Result<()> {
-    let namespace = node.namespace().unwrap_or_else(|| "default".to_string());
-    let api: Api<StellarNode> = Api::namespaced(client.clone(), &namespace);
-
-    let mut annotations = node.metadata.annotations.clone().unwrap_or_default();
-    if count == 0 {
-        annotations.remove(ARCHIVE_RETRIES_ANNOTATION);
-    } else {
-        annotations.insert(ARCHIVE_RETRIES_ANNOTATION.to_string(), count.to_string());
-    }
-
-    let patch = serde_json::json!({
-        "metadata": {
-            "annotations": annotations
-        }
-    });
-
-    api.patch(
-        &node.name_any(),
-        &PatchParams::apply("stellar-operator"),
-        &Patch::Merge(&patch),
-    )
-    .await
-    .map_err(Error::KubeError)?;
-
-    Ok(())
-}
-
 /// The main reconciliation function
 ///
 /// This function is called whenever:
@@ -190,38 +152,27 @@ async fn apply_stellar_node(client: &Client, node: &StellarNode) -> Result<Actio
         return Err(Error::ValidationError(e));
     }
 
-    // 1. Core infrastructure (PVC and ConfigMap) always managed by operator
-    resources::ensure_pvc(client, node).await?;
-    resources::ensure_config_map(client, node).await?;
-
-    // 2. Maintenance Mode Check
-    // If active, we skip workload management (Step 3) and suspension checks.
-    // This allows a human to manually scale the node up or down as needed.
-    if node.spec.maintenance_mode {
-        info!(
-            "Node {}/{} in Maintenance Mode. Skipping workload updates.",
-            namespace, name
-        );
-
-        resources::ensure_service(client, node).await?;
-
-        update_status(
-            client,
-            node,
-            "Maintenance",
-            Some("Manual maintenance mode active; workload management paused"),
-        )
-        .await?;
-
-        return Ok(Action::requeue(Duration::from_secs(60)));
-    }
-
-    // 3. Normal Mode: Handle suspension
-    // This only runs if NOT in maintenance mode.
+    // 2. Handle suspension
     if node.spec.suspended {
         info!("Node {}/{} is suspended, scaling to 0", namespace, name);
-        update_status(client, node, "Suspended", Some("Node is suspended"), 0, true).await?;
-        // Still create resources but with 0 replicas
+        
+        resources::ensure_pvc(client, node).await?;
+        resources::ensure_config_map(client, node).await?;
+        
+        match node.spec.node_type {
+            NodeType::Validator => {
+                resources::ensure_statefulset(client, node).await?;
+            }
+            NodeType::Horizon | NodeType::SorobanRpc => {
+                resources::ensure_deployment(client, node).await?;
+            }
+        }
+        
+        resources::ensure_service(client, node).await?;
+        
+        update_suspended_status(client, node).await?;
+        
+        return Ok(Action::requeue(Duration::from_secs(60)));
     }
 
     // History Archive Health Check for Validators
@@ -267,20 +218,14 @@ async fn apply_stellar_node(client: &Client, node: &StellarNode) -> Result<Actio
                         )
                         .await?;
 
-                        // Update status with condition (observed_generation NOT updated to trigger retry)
+                        // Update status with archive health condition (observed_generation NOT updated to trigger retry)
                         update_archive_health_status(client, node, &health_result).await?;
 
-                        // Requeue with exponential backoff
-                        let retries = get_retry_count(node);
-                        let delay = calculate_backoff(retries, None, None);
-
+                        let delay = calculate_backoff(0, None, None);
                         info!(
-                            "Requeuing {}/{} in {:?} (retry attempt {})",
-                            namespace, name, delay, retries + 1
+                            "Archive health check failed for {}/{}, requeuing in {:?}",
+                            namespace, name, delay
                         );
-
-                        // Increment retry count in annotations
-                        set_retry_count(client, node, retries + 1).await?;
 
                         return Ok(Action::requeue(delay));
                     } else {
@@ -290,13 +235,7 @@ async fn apply_stellar_node(client: &Client, node: &StellarNode) -> Result<Actio
                             name,
                             health_result.summary()
                         );
-                        // Update status with archive health condition
                         update_archive_health_status(client, node, &health_result).await?;
-
-                        // Reset retry count on success
-                        if get_retry_count(node) > 0 {
-                            set_retry_count(client, node, 0).await?;
-                        }
                     }
                 }
             }
@@ -337,7 +276,7 @@ async fn apply_stellar_node(client: &Client, node: &StellarNode) -> Result<Actio
     );
     
     // Determine the phase based on health check
-    let (phase, message) = if node.spec.suspended {
+    let (phase, message) = if false {
         ("Suspended", "Node is suspended".to_string())
     } else if !health_result.healthy {
         ("Creating", health_result.message.clone())
@@ -509,6 +448,42 @@ async fn get_ready_replicas(client: &Client, node: &StellarNode) -> Result<i32> 
             }
         }
     }
+}
+
+/// Update status for suspended nodes
+async fn update_suspended_status(client: &Client, node: &StellarNode) -> Result<()> {
+    let namespace = node.namespace().unwrap_or_else(|| "default".to_string());
+    let api: Api<StellarNode> = Api::namespaced(client.clone(), &namespace);
+
+    let condition = Condition {
+        type_: "Ready".to_string(),
+        status: "False".to_string(),
+        last_transition_time: chrono::Utc::now().to_rfc3339(),
+        reason: "NodeSuspended".to_string(),
+        message: "Node is offline - replicas scaled to 0. Service remains active for peer discovery.".to_string(),
+    };
+
+    let status = StellarNodeStatus {
+        phase: "Suspended".to_string(),
+        message: Some("Node suspended - scaled to 0 replicas".to_string()),
+        observed_generation: node.metadata.generation,
+        replicas: 0,
+        ready_replicas: 0,
+        ledger_sequence: None,
+        conditions: vec![condition],
+        ..Default::default()
+    };
+
+    let patch = serde_json::json!({ "status": status });
+    api.patch_status(
+        &node.name_any(),
+        &PatchParams::apply("stellar-operator"),
+        &Patch::Merge(&patch),
+    )
+    .await
+    .map_err(Error::KubeError)?;
+
+    Ok(())
 }
 
 /// Update the status subresource of a StellarNode

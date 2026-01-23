@@ -332,11 +332,24 @@ fn build_statefulset(node: &StellarNode) -> StatefulSet {
 
     let replicas = if node.spec.suspended { 0 } else { 1 }; // Validators always have 1 replica
 
+    let mut annotations = BTreeMap::new();
+    if node.spec.suspended {
+        annotations.insert(
+            "stellar.org/suspended".to_string(),
+            "true".to_string(),
+        );
+        annotations.insert(
+            "stellar.org/suspended-at".to_string(),
+            chrono::Utc::now().to_rfc3339(),
+        );
+    }
+
     StatefulSet {
         metadata: ObjectMeta {
             name: Some(name.clone()),
             namespace: node.namespace(),
             labels: Some(labels.clone()),
+            annotations: if annotations.is_empty() { None } else { Some(annotations) },
             owner_references: Some(vec![owner_reference(node)]),
             ..Default::default()
         },
@@ -391,6 +404,7 @@ pub async fn delete_workload(client: &Client, node: &StellarNode) -> Result<()> 
 // ============================================================================
 
 /// Ensure a Service exists for the node
+/// Service persists even when node is suspended to maintain peer discovery
 #[instrument(skip(client, node), fields(name = %node.name_any(), namespace = node.namespace()))]
 pub async fn ensure_service(client: &Client, node: &StellarNode) -> Result<()> {
     let namespace = node.namespace().unwrap_or_else(|| "default".to_string());
