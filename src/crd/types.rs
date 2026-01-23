@@ -472,3 +472,388 @@ impl Default for NetworkPolicyConfig {
         }
     }
 }
+
+// ============================================================================
+// MetalLB / BGP Anycast Configuration
+// ============================================================================
+
+/// Load Balancer configuration for external access via MetalLB with BGP Anycast support
+///
+/// This enables global node discovery by advertising Stellar node endpoints
+/// via BGP to upstream routers. Supports both L2 (ARP/NDP) and BGP modes.
+///
+/// # Example (BGP Anycast)
+///
+/// ```yaml
+/// loadBalancer:
+///   enabled: true
+///   mode: BGP
+///   addressPool: "stellar-anycast"
+///   loadBalancerIP: "192.0.2.100"
+///   bgp:
+///     localASN: 64512
+///     peers:
+///       - address: "192.168.1.1"
+///         asn: 64513
+///         password: "bgp-secret"
+///     communities:
+///       - "64512:100"
+///     advertisement:
+///       aggregationLength: 32
+///       aggregationLengthV6: 128
+/// ```
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct LoadBalancerConfig {
+    /// Enable LoadBalancer service creation (default: false)
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Load balancer mode: L2 or BGP (default: L2)
+    #[serde(default)]
+    pub mode: LoadBalancerMode,
+
+    /// MetalLB IPAddressPool name to use for IP allocation
+    /// Must match an existing IPAddressPool in the metallb-system namespace
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub address_pool: Option<String>,
+
+    /// Specific IP address to request from the pool
+    /// If not specified, an IP will be automatically allocated from the pool
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub load_balancer_ip: Option<String>,
+
+    /// External traffic policy: Cluster or Local
+    /// - Cluster: distribute traffic across all nodes (default)
+    /// - Local: preserve client source IP, only route to local pods
+    #[serde(default)]
+    pub external_traffic_policy: ExternalTrafficPolicy,
+
+    /// BGP-specific configuration for anycast routing
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bgp: Option<BGPConfig>,
+
+    /// Additional annotations to apply to the LoadBalancer Service
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub annotations: Option<BTreeMap<String, String>>,
+
+    /// Enable health check endpoint for load balancer probes
+    /// Creates an additional health check port on the service
+    #[serde(default = "default_true")]
+    pub health_check_enabled: bool,
+
+    /// Port for health check probes (default: 9100)
+    #[serde(default = "default_health_check_port")]
+    pub health_check_port: i32,
+}
+
+fn default_health_check_port() -> i32 {
+    9100
+}
+
+impl Default for LoadBalancerConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            mode: LoadBalancerMode::default(),
+            address_pool: None,
+            load_balancer_ip: None,
+            external_traffic_policy: ExternalTrafficPolicy::default(),
+            bgp: None,
+            annotations: None,
+            health_check_enabled: true,
+            health_check_port: default_health_check_port(),
+        }
+    }
+}
+
+/// Load balancer mode selection
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+pub enum LoadBalancerMode {
+    /// Layer 2 mode using ARP/NDP for local network advertisement
+    /// Simpler setup, but limited to single network segment
+    #[default]
+    L2,
+    /// BGP mode for anycast routing across multiple locations
+    /// Enables global node discovery and automatic failover
+    BGP,
+}
+
+impl std::fmt::Display for LoadBalancerMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LoadBalancerMode::L2 => write!(f, "L2"),
+            LoadBalancerMode::BGP => write!(f, "BGP"),
+        }
+    }
+}
+
+/// External traffic policy for LoadBalancer services
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+pub enum ExternalTrafficPolicy {
+    /// Distribute traffic across all cluster nodes (may cause extra hops)
+    #[default]
+    Cluster,
+    /// Only route to pods on the local node (preserves source IP)
+    Local,
+}
+
+impl std::fmt::Display for ExternalTrafficPolicy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ExternalTrafficPolicy::Cluster => write!(f, "Cluster"),
+            ExternalTrafficPolicy::Local => write!(f, "Local"),
+        }
+    }
+}
+
+/// BGP configuration for MetalLB anycast routing
+///
+/// Enables advertising Stellar node IPs to upstream BGP routers,
+/// allowing for geographic load distribution and automatic failover.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct BGPConfig {
+    /// Local Autonomous System Number (ASN) for this cluster
+    /// Must be coordinated with network administrators
+    pub local_asn: u32,
+
+    /// BGP peer routers to advertise routes to
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub peers: Vec<BGPPeer>,
+
+    /// BGP communities to attach to advertised routes
+    /// Format: "ASN:value" (e.g., "64512:100")
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub communities: Vec<String>,
+
+    /// Large BGP communities (RFC 8092) for extended tagging
+    /// Format: "ASN:function:value" (e.g., "64512:1:100")
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub large_communities: Vec<String>,
+
+    /// BGP advertisement configuration
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub advertisement: Option<BGPAdvertisementConfig>,
+
+    /// Enable BFD (Bidirectional Forwarding Detection) for fast failover
+    #[serde(default)]
+    pub bfd_enabled: bool,
+
+    /// BFD profile name to use (if bfd_enabled is true)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bfd_profile: Option<String>,
+
+    /// Node selectors to limit which nodes can be BGP speakers
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_selectors: Option<BTreeMap<String, String>>,
+}
+
+/// BGP peer router configuration
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct BGPPeer {
+    /// IP address of the BGP peer router
+    pub address: String,
+
+    /// Autonomous System Number of the peer
+    pub asn: u32,
+
+    /// BGP session password (optional, stored in secret)
+    /// Reference to a Kubernetes secret key
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub password_secret_ref: Option<SecretKeyRef>,
+
+    /// BGP port (default: 179)
+    #[serde(default = "default_bgp_port")]
+    pub port: u16,
+
+    /// Hold time in seconds (default: 90)
+    #[serde(default = "default_hold_time")]
+    pub hold_time: u32,
+
+    /// Keepalive time in seconds (default: 30)
+    #[serde(default = "default_keepalive_time")]
+    pub keepalive_time: u32,
+
+    /// Router ID override (default: auto-detect from node IP)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub router_id: Option<String>,
+
+    /// Source address for BGP session
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_address: Option<String>,
+
+    /// Enable EBGP multi-hop (required when peer is not directly connected)
+    #[serde(default)]
+    pub ebgp_multi_hop: bool,
+
+    /// Enable graceful restart capability
+    #[serde(default = "default_true")]
+    pub graceful_restart: bool,
+}
+
+fn default_bgp_port() -> u16 {
+    179
+}
+
+fn default_hold_time() -> u32 {
+    90
+}
+
+fn default_keepalive_time() -> u32 {
+    30
+}
+
+/// BGP advertisement configuration for route announcement
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct BGPAdvertisementConfig {
+    /// IPv4 aggregation length (CIDR prefix length, 0-32)
+    /// Used for route aggregation, e.g., 32 for host routes
+    #[serde(default = "default_aggregation_length")]
+    pub aggregation_length: u8,
+
+    /// IPv6 aggregation length (CIDR prefix length, 0-128)
+    #[serde(default = "default_aggregation_length_v6")]
+    pub aggregation_length_v6: u8,
+
+    /// Localpref value for this advertisement (affects route selection)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub local_pref: Option<u32>,
+
+    /// Node selector to limit which nodes announce the route
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_selectors: Option<BTreeMap<String, String>>,
+}
+
+fn default_aggregation_length() -> u8 {
+    32
+}
+
+fn default_aggregation_length_v6() -> u8 {
+    128
+}
+
+/// Global node discovery configuration for Stellar network peering
+///
+/// Configures how this Stellar node advertises itself for peer discovery
+/// across geographic regions using anycast and service mesh integration.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct GlobalDiscoveryConfig {
+    /// Enable global node discovery via BGP anycast
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Geographic region identifier (e.g., "us-east", "eu-west", "ap-south")
+    /// Used for topology-aware routing and failover
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub region: Option<String>,
+
+    /// Availability zone within the region
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub zone: Option<String>,
+
+    /// Priority weight for this node (higher = more preferred)
+    /// Used by BGP local preference and weighted routing
+    #[serde(default = "default_priority")]
+    pub priority: u32,
+
+    /// Enable topology-aware hints for service routing
+    /// Requires Kubernetes 1.23+ with topology-aware hints enabled
+    #[serde(default)]
+    pub topology_aware_hints: bool,
+
+    /// Service mesh integration (Istio, Linkerd, etc.)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service_mesh: Option<ServiceMeshConfig>,
+
+    /// External DNS configuration for automatic DNS registration
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub external_dns: Option<ExternalDNSConfig>,
+}
+
+fn default_priority() -> u32 {
+    100
+}
+
+impl Default for GlobalDiscoveryConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            region: None,
+            zone: None,
+            priority: default_priority(),
+            topology_aware_hints: false,
+            service_mesh: None,
+            external_dns: None,
+        }
+    }
+}
+
+/// Service mesh integration configuration
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceMeshConfig {
+    /// Service mesh type (istio, linkerd, consul)
+    pub mesh_type: ServiceMeshType,
+
+    /// Enable automatic sidecar injection
+    #[serde(default = "default_true")]
+    pub sidecar_injection: bool,
+
+    /// mTLS mode for mesh communication
+    #[serde(default)]
+    pub mtls_mode: MTLSMode,
+
+    /// Virtual service hostname for mesh routing
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub virtual_service_host: Option<String>,
+}
+
+/// Supported service mesh implementations
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ServiceMeshType {
+    Istio,
+    Linkerd,
+    Consul,
+}
+
+/// mTLS enforcement mode
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum MTLSMode {
+    /// No mTLS (plain text)
+    Disable,
+    /// Accept both mTLS and plain text
+    #[default]
+    Permissive,
+    /// Require mTLS for all connections
+    Strict,
+}
+
+/// ExternalDNS configuration for automatic DNS record management
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ExternalDNSConfig {
+    /// DNS hostname to register (e.g., "stellar-node.example.com")
+    pub hostname: String,
+
+    /// TTL for DNS records in seconds (default: 300)
+    #[serde(default = "default_dns_ttl")]
+    pub ttl: u32,
+
+    /// DNS provider (route53, cloudflare, google, etc.)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+
+    /// Additional DNS record annotations for external-dns
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub annotations: Option<BTreeMap<String, String>>,
+}
+
+fn default_dns_ttl() -> u32 {
+    300
+}

@@ -8,9 +8,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::types::{
-    AutoscalingConfig, Condition, ExternalDatabaseConfig, HorizonConfig, IngressConfig,
-    NetworkPolicyConfig, NodeType, ResourceRequirements, RetentionPolicy, SorobanConfig,
-    StellarNetwork, StorageConfig, ValidatorConfig,
+    AutoscalingConfig, Condition, ExternalDatabaseConfig, GlobalDiscoveryConfig, HorizonConfig,
+    IngressConfig, LoadBalancerConfig, NetworkPolicyConfig, NodeType, ResourceRequirements,
+    RetentionPolicy, SorobanConfig, StellarNetwork, StorageConfig, ValidatorConfig,
 };
 
 /// The StellarNode CRD represents a managed Stellar infrastructure node.
@@ -126,6 +126,16 @@ pub struct StellarNodeSpec {
     /// for peer-to-peer (Validators), API access (Horizon/Soroban), and metrics
     #[serde(skip_serializing_if = "Option::is_none")]
     pub network_policy: Option<NetworkPolicyConfig>,
+
+    /// MetalLB LoadBalancer configuration for external access
+    /// Supports L2 and BGP modes for global node discovery via anycast
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub load_balancer: Option<LoadBalancerConfig>,
+
+    /// Global node discovery configuration for cross-region peering
+    /// Enables topology-aware routing and automatic DNS registration
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub global_discovery: Option<GlobalDiscoveryConfig>,
 }
 
 fn default_replicas() -> i32 {
@@ -191,6 +201,17 @@ impl StellarNodeSpec {
                 }
             }
         }
+
+        // Validate load balancer configuration (all node types)
+        if let Some(lb) = &self.load_balancer {
+            validate_load_balancer(lb)?;
+        }
+
+        // Validate global discovery configuration
+        if let Some(gd) = &self.global_discovery {
+            validate_global_discovery(gd)?;
+        }
+
         Ok(())
     }
 
@@ -240,6 +261,71 @@ fn validate_ingress(ingress: &IngressConfig) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_load_balancer(lb: &LoadBalancerConfig) -> Result<(), String> {
+    use super::types::LoadBalancerMode;
+
+    if !lb.enabled {
+        return Ok(());
+    }
+
+    // BGP mode requires peers configuration
+    if lb.mode == LoadBalancerMode::BGP {
+        if let Some(bgp) = &lb.bgp {
+            if bgp.local_asn == 0 {
+                return Err(
+                    "loadBalancer.bgp.localASN must be a valid ASN (1-4294967295)".to_string(),
+                );
+            }
+            if bgp.peers.is_empty() {
+                return Err(
+                    "loadBalancer.bgp.peers must not be empty when using BGP mode".to_string(),
+                );
+            }
+            for (i, peer) in bgp.peers.iter().enumerate() {
+                if peer.address.trim().is_empty() {
+                    return Err(format!(
+                        "loadBalancer.bgp.peers[{}].address must not be empty",
+                        i
+                    ));
+                }
+                if peer.asn == 0 {
+                    return Err(format!(
+                        "loadBalancer.bgp.peers[{}].asn must be a valid ASN",
+                        i
+                    ));
+                }
+            }
+        } else {
+            return Err("loadBalancer.bgp configuration is required when mode is BGP".to_string());
+        }
+    }
+
+    // Validate health check port range
+    if lb.health_check_enabled && (lb.health_check_port < 1 || lb.health_check_port > 65535) {
+        return Err("loadBalancer.healthCheckPort must be between 1 and 65535".to_string());
+    }
+
+    Ok(())
+}
+
+fn validate_global_discovery(gd: &GlobalDiscoveryConfig) -> Result<(), String> {
+    if !gd.enabled {
+        return Ok(());
+    }
+
+    // Validate external DNS if configured
+    if let Some(dns) = &gd.external_dns {
+        if dns.hostname.trim().is_empty() {
+            return Err("globalDiscovery.externalDns.hostname must not be empty".to_string());
+        }
+        if dns.ttl == 0 {
+            return Err("globalDiscovery.externalDns.ttl must be greater than 0".to_string());
+        }
+    }
+
+    Ok(())
+}
+
 /// Status subresource for StellarNode
 ///
 /// Reports the current state of the managed Stellar node.
@@ -270,6 +356,14 @@ pub struct StellarNodeStatus {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub endpoint: Option<String>,
 
+    /// External load balancer IP assigned by MetalLB
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub external_ip: Option<String>,
+
+    /// BGP advertisement status (when using BGP mode)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bgp_status: Option<BGPStatus>,
+
     /// Current number of ready replicas
     #[serde(default)]
     pub ready_replicas: i32,
@@ -277,6 +371,25 @@ pub struct StellarNodeStatus {
     /// Total number of desired replicas
     #[serde(default)]
     pub replicas: i32,
+}
+
+/// BGP advertisement status information
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct BGPStatus {
+    /// Whether BGP sessions are established
+    pub sessions_established: bool,
+
+    /// Number of active BGP peers
+    pub active_peers: i32,
+
+    /// Advertised IP prefixes
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub advertised_prefixes: Vec<String>,
+
+    /// Last BGP update time
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_update: Option<String>,
 }
 
 impl StellarNodeStatus {

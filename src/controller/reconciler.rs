@@ -1,6 +1,4 @@
-//! Main reconciler for StellarNode resources
-//!
-//! Implements the controller pattern using kube-rs runtime.
+
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -20,9 +18,7 @@ use kube::{
 };
 use tracing::{debug, error, info, instrument, warn};
 
-use crate::crd::{
-    Condition, NodeType, StellarNode, StellarNodeStatus,
-};
+use crate::crd::{Condition, NodeType, StellarNode, StellarNodeStatus};
 use crate::error::{Error, Result};
 
 // Constants
@@ -162,10 +158,10 @@ async fn apply_stellar_node(client: &Client, node: &StellarNode) -> Result<Actio
     // 2. Handle suspension
     if node.spec.suspended {
         info!("Node {}/{} is suspended, scaling to 0", namespace, name);
-        
+
         resources::ensure_pvc(client, node).await?;
         resources::ensure_config_map(client, node).await?;
-        
+
         match node.spec.node_type {
             NodeType::Validator => {
                 resources::ensure_statefulset(client, node).await?;
@@ -174,11 +170,11 @@ async fn apply_stellar_node(client: &Client, node: &StellarNode) -> Result<Actio
                 resources::ensure_deployment(client, node).await?;
             }
         }
-        
+
         resources::ensure_service(client, node).await?;
-        
+
         update_suspended_status(client, node).await?;
-        
+
         return Ok(Action::requeue(Duration::from_secs(60)));
     }
 
@@ -304,7 +300,10 @@ async fn apply_stellar_node(client: &Client, node: &StellarNode) -> Result<Actio
             if remediation::can_remediate(node) {
                 match stale_check.recommended_action {
                     remediation::RemediationLevel::Restart => {
-                        info!("Initiating pod restart remediation for {}/{}", namespace, name);
+                        info!(
+                            "Initiating pod restart remediation for {}/{}",
+                            namespace, name
+                        );
 
                         // Emit event before remediation
                         remediation::emit_remediation_event(
@@ -414,7 +413,7 @@ async fn apply_stellar_node(client: &Client, node: &StellarNode) -> Result<Actio
     };
 
     // 6. Update status with health check results
-    
+
     // 7. Update status with health check results
     update_status_with_health(client, node, phase, Some(&message), &health_result).await?;
 
@@ -629,7 +628,9 @@ async fn update_suspended_status(client: &Client, node: &StellarNode) -> Result<
         status: "False".to_string(),
         last_transition_time: chrono::Utc::now().to_rfc3339(),
         reason: "NodeSuspended".to_string(),
-        message: "Node is offline - replicas scaled to 0. Service remains active for peer discovery.".to_string(),
+        message:
+            "Node is offline - replicas scaled to 0. Service remains active for peer discovery."
+                .to_string(),
     };
 
     let status = StellarNodeStatus {

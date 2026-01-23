@@ -18,18 +18,20 @@ use k8s_openapi::api::core::v1::{
     VolumeResourceRequirements,
 };
 use k8s_openapi::api::networking::v1::{
-    HTTPIngressPath, HTTPIngressRuleValue, Ingress, IngressBackend, IngressRule,
-    IngressServiceBackend, IngressSpec, IngressTLS, ServiceBackendPort,
-    IPBlock, NetworkPolicy, NetworkPolicyIngressRule, NetworkPolicyPeer, NetworkPolicyPort,
-    NetworkPolicySpec,
+    HTTPIngressPath, HTTPIngressRuleValue, IPBlock, Ingress, IngressBackend, IngressRule,
+    IngressServiceBackend, IngressSpec, IngressTLS, NetworkPolicy, NetworkPolicyIngressRule,
+    NetworkPolicyPeer, NetworkPolicyPort, NetworkPolicySpec, ServiceBackendPort,
 };
 use k8s_openapi::apimachinery::pkg::api::resource::Quantity;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::{LabelSelector, ObjectMeta, OwnerReference};
 use kube::api::{Api, DeleteParams, Patch, PatchParams, PostParams};
 use kube::{Client, Resource, ResourceExt};
-use tracing::{info, warn, instrument};
+use tracing::{info, instrument, warn};
 
-use crate::crd::{IngressConfig, KeySource, NetworkPolicyConfig, NodeType, StellarNode};
+use crate::crd::{
+    ExternalTrafficPolicy, IngressConfig, KeySource, LoadBalancerConfig, LoadBalancerMode,
+    NetworkPolicyConfig, NodeType, StellarNode,
+};
 use crate::error::{Error, Result};
 
 /// Get the standard labels for a StellarNode's resources
@@ -338,10 +340,7 @@ fn build_statefulset(node: &StellarNode) -> StatefulSet {
 
     let mut annotations = BTreeMap::new();
     if node.spec.suspended {
-        annotations.insert(
-            "stellar.org/suspended".to_string(),
-            "true".to_string(),
-        );
+        annotations.insert("stellar.org/suspended".to_string(), "true".to_string());
         annotations.insert(
             "stellar.org/suspended-at".to_string(),
             chrono::Utc::now().to_rfc3339(),
@@ -353,7 +352,11 @@ fn build_statefulset(node: &StellarNode) -> StatefulSet {
             name: Some(name.clone()),
             namespace: node.namespace(),
             labels: Some(labels.clone()),
-            annotations: if annotations.is_empty() { None } else { Some(annotations) },
+            annotations: if annotations.is_empty() {
+                None
+            } else {
+                Some(annotations)
+            },
             owner_references: Some(vec![owner_reference(node)]),
             ..Default::default()
         },
@@ -472,6 +475,491 @@ fn build_service(node: &StellarNode) -> Service {
         }),
         status: None,
     }
+}
+
+// ============================================================================
+// LoadBalancer Service (MetalLB Integration)
+// ============================================================================
+
+/// Ensure a LoadBalancer Service exists for external access via MetalLB
+#[instrument(skip(client, node), fields(name = %node.name_any(), namespace = node.namespace()))]
+pub async fn ensure_load_balancer_service(client: &Client, node: &StellarNode) -> Result<()> {
+    let lb_cfg = match &node.spec.load_balancer {
+        Some(cfg) if cfg.enabled => cfg,
+        _ => return Ok(()),
+    };
+
+    let namespace = node.namespace().unwrap_or_else(|| "default".to_string());
+    let api: Api<Service> = Api::namespaced(client.clone(), &namespace);
+    let name = resource_name(node, "lb");
+
+    let service = build_load_balancer_service(node, lb_cfg);
+
+    api.patch(
+        &name,
+        &PatchParams::apply("stellar-operator").force(),
+        &Patch::Apply(&service),
+    )
+    .await?;
+
+    info!("LoadBalancer Service ensured for {}/{}", namespace, name);
+    Ok(())
+}
+
+fn build_load_balancer_service(node: &StellarNode, config: &LoadBalancerConfig) -> Service {
+    let labels = standard_labels(node);
+    let name = resource_name(node, "lb");
+
+    // Build service ports based on node type
+    let mut ports = match node.spec.node_type {
+        NodeType::Validator => vec![
+            ServicePort {
+                name: Some("peer".to_string()),
+                port: 11625,
+                target_port: Some(
+                    k8s_openapi::apimachinery::pkg::util::intstr::IntOrString::Int(11625),
+                ),
+                protocol: Some("TCP".to_string()),
+                ..Default::default()
+            },
+            ServicePort {
+                name: Some("http".to_string()),
+                port: 11626,
+                target_port: Some(
+                    k8s_openapi::apimachinery::pkg::util::intstr::IntOrString::Int(11626),
+                ),
+                protocol: Some("TCP".to_string()),
+                ..Default::default()
+            },
+        ],
+        NodeType::Horizon | NodeType::SorobanRpc => vec![ServicePort {
+            name: Some("http".to_string()),
+            port: 8000,
+            target_port: Some(k8s_openapi::apimachinery::pkg::util::intstr::IntOrString::Int(8000)),
+            protocol: Some("TCP".to_string()),
+            ..Default::default()
+        }],
+    };
+
+    // Add health check port if enabled
+    if config.health_check_enabled {
+        ports.push(ServicePort {
+            name: Some("health".to_string()),
+            port: config.health_check_port,
+            target_port: Some(
+                k8s_openapi::apimachinery::pkg::util::intstr::IntOrString::Int(
+                    config.health_check_port,
+                ),
+            ),
+            protocol: Some("TCP".to_string()),
+            ..Default::default()
+        });
+    }
+
+    // Build annotations for MetalLB
+    let mut annotations = config.annotations.clone().unwrap_or_default();
+
+    // Add MetalLB address pool annotation if specified
+    if let Some(pool) = &config.address_pool {
+        annotations.insert("metallb.universe.tf/address-pool".to_string(), pool.clone());
+    }
+
+    // Add MetalLB load balancer sharing annotation for anycast
+    annotations.insert(
+        "metallb.universe.tf/allow-shared-ip".to_string(),
+        format!("stellar-{}", node.name_any()),
+    );
+
+    // Add BGP-specific annotations
+    if config.mode == LoadBalancerMode::BGP {
+        if let Some(bgp) = &config.bgp {
+            // Add BGP communities annotation
+            if !bgp.communities.is_empty() {
+                annotations.insert(
+                    "metallb.universe.tf/bgp-peer-communities".to_string(),
+                    bgp.communities.join(","),
+                );
+            }
+
+            // Add large communities
+            if !bgp.large_communities.is_empty() {
+                annotations.insert(
+                    "metallb.universe.tf/bgp-large-communities".to_string(),
+                    bgp.large_communities.join(","),
+                );
+            }
+        }
+    }
+
+    // Add global discovery annotations
+    if let Some(gd) = &node.spec.global_discovery {
+        if gd.enabled {
+            if let Some(region) = &gd.region {
+                annotations.insert("stellar.org/region".to_string(), region.clone());
+            }
+            if let Some(zone) = &gd.zone {
+                annotations.insert("stellar.org/zone".to_string(), zone.clone());
+            }
+            annotations.insert("stellar.org/priority".to_string(), gd.priority.to_string());
+
+            // Add topology aware hints annotation
+            if gd.topology_aware_hints {
+                annotations.insert(
+                    "service.kubernetes.io/topology-mode".to_string(),
+                    "Auto".to_string(),
+                );
+            }
+
+            // Add external-dns annotations if configured
+            if let Some(dns) = &gd.external_dns {
+                annotations.insert(
+                    "external-dns.alpha.kubernetes.io/hostname".to_string(),
+                    dns.hostname.clone(),
+                );
+                annotations.insert(
+                    "external-dns.alpha.kubernetes.io/ttl".to_string(),
+                    dns.ttl.to_string(),
+                );
+                if let Some(extra) = &dns.annotations {
+                    annotations.extend(extra.clone());
+                }
+            }
+        }
+    }
+
+    let external_traffic_policy = match config.external_traffic_policy {
+        ExternalTrafficPolicy::Cluster => "Cluster".to_string(),
+        ExternalTrafficPolicy::Local => "Local".to_string(),
+    };
+
+    Service {
+        metadata: ObjectMeta {
+            name: Some(name),
+            namespace: node.namespace(),
+            labels: Some(labels.clone()),
+            annotations: if annotations.is_empty() {
+                None
+            } else {
+                Some(annotations)
+            },
+            owner_references: Some(vec![owner_reference(node)]),
+            ..Default::default()
+        },
+        spec: Some(ServiceSpec {
+            type_: Some("LoadBalancer".to_string()),
+            selector: Some(labels),
+            ports: Some(ports),
+            load_balancer_ip: config.load_balancer_ip.clone(),
+            external_traffic_policy: Some(external_traffic_policy),
+            ..Default::default()
+        }),
+        status: None,
+    }
+}
+
+/// Delete the LoadBalancer Service for a node
+#[instrument(skip(client, node), fields(name = %node.name_any(), namespace = node.namespace()))]
+pub async fn delete_load_balancer_service(client: &Client, node: &StellarNode) -> Result<()> {
+    if node.spec.load_balancer.is_none() {
+        return Ok(());
+    }
+
+    let namespace = node.namespace().unwrap_or_else(|| "default".to_string());
+    let api: Api<Service> = Api::namespaced(client.clone(), &namespace);
+    let name = resource_name(node, "lb");
+
+    match api.delete(&name, &DeleteParams::default()).await {
+        Ok(_) => info!("Deleted LoadBalancer Service {}", name),
+        Err(kube::Error::Api(e)) if e.code == 404 => {
+            warn!("LoadBalancer Service {} not found, already deleted", name);
+        }
+        Err(e) => return Err(Error::KubeError(e)),
+    }
+
+    Ok(())
+}
+
+// ============================================================================
+// MetalLB BGP Configuration Resources
+// ============================================================================
+
+/// Ensure MetalLB BGPAdvertisement and IPAddressPool ConfigMaps are documented
+/// Note: MetalLB CRDs must be created manually or via Helm; this function
+/// creates the recommended ConfigMap for cluster operators to reference.
+#[instrument(skip(client, node), fields(name = %node.name_any(), namespace = node.namespace()))]
+pub async fn ensure_metallb_config(client: &Client, node: &StellarNode) -> Result<()> {
+    let lb_cfg = match &node.spec.load_balancer {
+        Some(cfg) if cfg.enabled && cfg.mode == LoadBalancerMode::BGP => cfg,
+        _ => return Ok(()),
+    };
+
+    let namespace = node.namespace().unwrap_or_else(|| "default".to_string());
+    let api: Api<ConfigMap> = Api::namespaced(client.clone(), &namespace);
+    let name = resource_name(node, "metallb-config");
+
+    let config = build_metallb_config_map(node, lb_cfg);
+
+    api.patch(
+        &name,
+        &PatchParams::apply("stellar-operator").force(),
+        &Patch::Apply(&config),
+    )
+    .await?;
+
+    info!(
+        "MetalLB configuration ConfigMap ensured for {}/{}",
+        namespace, name
+    );
+    Ok(())
+}
+
+fn build_metallb_config_map(node: &StellarNode, config: &LoadBalancerConfig) -> ConfigMap {
+    let labels = standard_labels(node);
+    let name = resource_name(node, "metallb-config");
+
+    let bgp = config.bgp.as_ref();
+    let mut data = BTreeMap::new();
+
+    // Generate IPAddressPool YAML
+    let address_pool_yaml = if let Some(ip) = &config.load_balancer_ip {
+        format!(
+            r#"# IPAddressPool for {}
+# Apply this to metallb-system namespace
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: stellar-{}-pool
+  namespace: metallb-system
+spec:
+  addresses:
+    - {}/32
+  autoAssign: true
+"#,
+            node.name_any(),
+            node.name_any(),
+            ip
+        )
+    } else if let Some(pool) = &config.address_pool {
+        format!(
+            r#"# Using existing IPAddressPool: {}
+# Ensure this pool exists in metallb-system namespace
+"#,
+            pool
+        )
+    } else {
+        "# No specific IP or pool configured; MetalLB will use default pool\n".to_string()
+    };
+
+    data.insert("ip-address-pool.yaml".to_string(), address_pool_yaml);
+
+    // Generate BGPAdvertisement YAML
+    if let Some(bgp_cfg) = bgp {
+        let communities_yaml = if !bgp_cfg.communities.is_empty() {
+            format!(
+                "  communities:\n{}",
+                bgp_cfg
+                    .communities
+                    .iter()
+                    .map(|c| format!("    - {}", c))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            )
+        } else {
+            String::new()
+        };
+
+        let node_selectors_yaml = if let Some(adv) = &bgp_cfg.advertisement {
+            if let Some(selectors) = &adv.node_selectors {
+                format!(
+                    "  nodeSelectors:\n    - matchLabels:\n{}",
+                    selectors
+                        .iter()
+                        .map(|(k, v)| format!("        {}: \"{}\"", k, v))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                )
+            } else {
+                String::new()
+            }
+        } else {
+            String::new()
+        };
+
+        let aggregation = bgp_cfg
+            .advertisement
+            .as_ref()
+            .map(|a| a.aggregation_length)
+            .unwrap_or(32);
+
+        let bgp_advertisement_yaml = format!(
+            r#"# BGPAdvertisement for {}
+# Apply this to metallb-system namespace
+apiVersion: metallb.io/v1beta1
+kind: BGPAdvertisement
+metadata:
+  name: stellar-{}-bgp
+  namespace: metallb-system
+spec:
+  ipAddressPools:
+    - stellar-{}-pool
+  aggregationLength: {}
+{}{}
+"#,
+            node.name_any(),
+            node.name_any(),
+            node.name_any(),
+            aggregation,
+            communities_yaml,
+            node_selectors_yaml
+        );
+
+        data.insert("bgp-advertisement.yaml".to_string(), bgp_advertisement_yaml);
+
+        // Generate BGPPeer YAML for each peer
+        let peers_yaml: String = bgp_cfg
+            .peers
+            .iter()
+            .enumerate()
+            .map(|(i, peer)| {
+                let password_ref = peer.password_secret_ref.as_ref().map(|s| {
+                    format!(
+                        r#"  password:
+    secretRef:
+      name: {}
+      key: {}"#,
+                        s.name, s.key
+                    )
+                });
+
+                let bfd_profile = if bgp_cfg.bfd_enabled {
+                    bgp_cfg
+                        .bfd_profile
+                        .as_ref()
+                        .map(|p| format!("  bfdProfile: {}", p))
+                        .unwrap_or_default()
+                } else {
+                    String::new()
+                };
+
+                format!(
+                    r#"---
+# BGPPeer {} for {}
+apiVersion: metallb.io/v1beta2
+kind: BGPPeer
+metadata:
+  name: stellar-{}-peer-{}
+  namespace: metallb-system
+spec:
+  myASN: {}
+  peerASN: {}
+  peerAddress: {}
+  peerPort: {}
+  holdTime: {}s
+  keepaliveTime: {}s
+  ebgpMultiHop: {}
+{}{}
+"#,
+                    i + 1,
+                    node.name_any(),
+                    node.name_any(),
+                    i,
+                    bgp_cfg.local_asn,
+                    peer.asn,
+                    peer.address,
+                    peer.port,
+                    peer.hold_time,
+                    peer.keepalive_time,
+                    peer.ebgp_multi_hop,
+                    password_ref.unwrap_or_default(),
+                    bfd_profile
+                )
+            })
+            .collect();
+
+        data.insert("bgp-peers.yaml".to_string(), peers_yaml);
+    }
+
+    // Generate L2Advertisement YAML as fallback
+    if config.mode == LoadBalancerMode::L2 || config.mode == LoadBalancerMode::BGP {
+        let l2_advertisement_yaml = format!(
+            r#"# L2Advertisement for {} (optional fallback)
+# Apply this to metallb-system namespace
+apiVersion: metallb.io/v1beta1
+kind: L2Advertisement
+metadata:
+  name: stellar-{}-l2
+  namespace: metallb-system
+spec:
+  ipAddressPools:
+    - stellar-{}-pool
+"#,
+            node.name_any(),
+            node.name_any(),
+            node.name_any()
+        );
+
+        data.insert("l2-advertisement.yaml".to_string(), l2_advertisement_yaml);
+    }
+
+    // Add usage instructions
+    let instructions = format!(
+        r#"# MetalLB Configuration for Stellar Node: {}
+#
+# This ConfigMap contains the recommended MetalLB resources for BGP anycast.
+# Apply these manifests to enable global node discovery.
+#
+# Prerequisites:
+# 1. MetalLB must be installed in the cluster (metallb-system namespace)
+# 2. BGP peers must be configured to accept connections from cluster nodes
+# 3. Firewall rules must allow BGP traffic (TCP port 179)
+#
+# Installation:
+#   kubectl apply -f ip-address-pool.yaml -n metallb-system
+#   kubectl apply -f bgp-advertisement.yaml -n metallb-system
+#   kubectl apply -f bgp-peers.yaml -n metallb-system
+#
+# Verification:
+#   kubectl get ipaddresspools -n metallb-system
+#   kubectl get bgpadvertisements -n metallb-system
+#   kubectl get bgppeers -n metallb-system
+#   kubectl logs -n metallb-system -l app=metallb,component=speaker
+#
+# For more information, see: https://metallb.universe.tf/configuration/
+"#,
+        node.name_any()
+    );
+
+    data.insert("README.md".to_string(), instructions);
+
+    ConfigMap {
+        metadata: ObjectMeta {
+            name: Some(name),
+            namespace: node.namespace(),
+            labels: Some(labels),
+            owner_references: Some(vec![owner_reference(node)]),
+            ..Default::default()
+        },
+        data: Some(data),
+        ..Default::default()
+    }
+}
+
+/// Delete the MetalLB configuration ConfigMap
+#[instrument(skip(client, node), fields(name = %node.name_any(), namespace = node.namespace()))]
+pub async fn delete_metallb_config(client: &Client, node: &StellarNode) -> Result<()> {
+    let namespace = node.namespace().unwrap_or_else(|| "default".to_string());
+    let api: Api<ConfigMap> = Api::namespaced(client.clone(), &namespace);
+    let name = resource_name(node, "metallb-config");
+
+    match api.delete(&name, &DeleteParams::default()).await {
+        Ok(_) => info!("Deleted MetalLB ConfigMap {}", name),
+        Err(kube::Error::Api(e)) if e.code == 404 => {
+            info!("MetalLB ConfigMap {} not found, skipping delete", name);
+        }
+        Err(e) => return Err(Error::KubeError(e)),
+    }
+
+    Ok(())
 }
 
 /// Delete the Service for a node
@@ -1333,7 +1821,10 @@ fn build_network_policy(node: &StellarNode, config: &NetworkPolicyConfig) -> Net
             pod_selector: LabelSelector {
                 match_labels: Some(BTreeMap::from([
                     ("app.kubernetes.io/instance".to_string(), node.name_any()),
-                    ("app.kubernetes.io/name".to_string(), "stellar-node".to_string()),
+                    (
+                        "app.kubernetes.io/name".to_string(),
+                        "stellar-node".to_string(),
+                    ),
                 ])),
                 ..Default::default()
             },
