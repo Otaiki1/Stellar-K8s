@@ -165,21 +165,25 @@ pub async fn delete_pvc(client: &Client, node: &StellarNode) -> Result<()> {
 
 /// Ensure a ConfigMap exists with node configuration
 #[instrument(skip(client, node), fields(name = %node.name_any(), namespace = node.namespace()))]
-pub async fn ensure_config_map(client: &Client, node: &StellarNode) -> Result<()> {
+pub async fn ensure_config_map(
+    client: &Client, 
+    node: &StellarNode, 
+    quorum_override: Option<String>
+) -> Result<()> {
     let namespace = node.namespace().unwrap_or_else(|| "default".to_string());
     let api: Api<ConfigMap> = Api::namespaced(client.clone(), &namespace);
     let name = resource_name(node, "config");
 
-    let cm = build_config_map(node);
+    let cm = build_config_map(node, quorum_override);
 
     let patch = Patch::Apply(&cm);
-    api.patch(&name, &PatchParams::apply("stellar-operator"), &patch)
+    api.patch(&name, &PatchParams::apply("stellar-operator").force(), &patch)
         .await?;
 
     Ok(())
 }
 
-fn build_config_map(node: &StellarNode) -> ConfigMap {
+fn build_config_map(node: &StellarNode, quorum_override: Option<String>) -> ConfigMap {
     let labels = standard_labels(node);
     let name = resource_name(node, "config");
 
@@ -195,8 +199,9 @@ fn build_config_map(node: &StellarNode) -> ConfigMap {
     match &node.spec.node_type {
         NodeType::Validator => {
             if let Some(config) = &node.spec.validator_config {
-                if let Some(quorum) = &config.quorum_set {
-                    data.insert("stellar-core.cfg".to_string(), quorum.clone());
+                let quorum = quorum_override.or_else(|| config.quorum_set.clone());
+                if let Some(q) = quorum {
+                    data.insert("stellar-core.cfg".to_string(), q);
                 }
             }
         }

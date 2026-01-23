@@ -32,6 +32,7 @@ use super::health;
 use super::metrics;
 use super::remediation;
 use super::resources;
+use super::vsl;
 
 /// Shared state for the controller
 pub struct ControllerState {
@@ -162,8 +163,8 @@ async fn apply_stellar_node(client: &Client, node: &StellarNode) -> Result<Actio
         info!("Node {}/{} is suspended, scaling to 0", namespace, name);
 
         resources::ensure_pvc(client, node).await?;
-        resources::ensure_config_map(client, node).await?;
-
+        resources::ensure_config_map(client, node, None).await?;
+        
         match node.spec.node_type {
             NodeType::Validator => {
                 resources::ensure_statefulset(client, node).await?;
@@ -263,8 +264,33 @@ async fn apply_stellar_node(client: &Client, node: &StellarNode) -> Result<Actio
     resources::ensure_pvc(client, node).await?;
     info!("PVC ensured for {}/{}", namespace, name);
 
-    // 2. Create/update the ConfigMap for node configuration
-    resources::ensure_config_map(client, node).await?;
+    // 2. Handle VSL Fetching for Validators
+    let mut quorum_override = None;
+    if node.spec.node_type == NodeType::Validator {
+        if let Some(config) = &node.spec.validator_config {
+            if let Some(vl_source) = &config.vl_source {
+                match vsl::fetch_vsl(vl_source).await {
+                    Ok(quorum) => {
+                        quorum_override = Some(quorum);
+                    }
+                    Err(e) => {
+                        warn!("Failed to fetch VSL for {}/{}: {}", namespace, name, e);
+                        emit_event(
+                            client,
+                            node,
+                            "Warning",
+                            "VSLFetchFailed",
+                            &format!("Failed to fetch VSL from {}: {}", vl_source, e),
+                        )
+                        .await?;
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. Create/update the ConfigMap for node configuration
+    resources::ensure_config_map(client, node, quorum_override.clone()).await?;
     info!("ConfigMap ensured for {}/{}", namespace, name);
 
     // 3. Create/update the Deployment/StatefulSet based on node type
@@ -287,6 +313,26 @@ async fn apply_stellar_node(client: &Client, node: &StellarNode) -> Result<Actio
         "Health check result for {}/{}: healthy={}, synced={}, message={}",
         namespace, name, health_result.healthy, health_result.synced, health_result.message
     );
+
+    // 7. Trigger config-reload if VSL was updated and pod is ready
+    if let Some(_quorum) = quorum_override {
+        if health_result.healthy {
+            // Get pod IP to trigger reload
+            let pod_api: Api<k8s_openapi::api::core::v1::Pod> = Api::namespaced(client.clone(), &namespace);
+            let lp = kube::api::ListParams::default().labels(&format!("app.kubernetes.io/instance={}", name));
+            if let Ok(pods) = pod_api.list(&lp).await {
+                if let Some(pod) = pods.items.first() {
+                    if let Some(status) = &pod.status {
+                        if let Some(ip) = &status.pod_ip {
+                            if let Err(e) = vsl::trigger_config_reload(ip).await {
+                                warn!("Failed to trigger config-reload for {}/{}: {}", namespace, name, e);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     // 6. Auto-remediation check for stale nodes
     // Only check if node is healthy but potentially stale (ledger not progressing)

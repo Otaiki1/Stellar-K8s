@@ -12,6 +12,7 @@ mod health_test;
 mod reconciler;
 mod remediation;
 mod resources;
+mod vsl;
 
 pub use archive_health::{check_history_archive_health, calculate_backoff, ArchiveHealthResult};
 pub use finalizers::STELLAR_NODE_FINALIZER;
