@@ -121,6 +121,9 @@ pub struct StellarNodeSpec {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ingress: Option<IngressConfig>,
 
+    /// Maintenance mode (skips workload updates)
+    #[serde(default)]
+    pub maintenance_mode: bool,
     /// Network Policy configuration for restricting ingress traffic
     /// When enabled, creates a deny-all policy with explicit allow rules
     /// for peer-to-peer (Validators), API access (Horizon/Soroban), and metrics
