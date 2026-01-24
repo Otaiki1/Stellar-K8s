@@ -53,8 +53,8 @@ use super::types::{
     shortname = "sn",
     printcolumn = r#"{"name":"Type","type":"string","jsonPath":".spec.nodeType"}"#,
     printcolumn = r#"{"name":"Network","type":"string","jsonPath":".spec.network"}"#,
+    printcolumn = r#"{"name":"Ready","type":"string","jsonPath":".status.conditions[?(@.type=='Ready')].status"}"#,
     printcolumn = r#"{"name":"Replicas","type":"integer","jsonPath":".spec.replicas"}"#,
-    printcolumn = r#"{"name":"Phase","type":"string","jsonPath":".status.phase"}"#,
     printcolumn = r#"{"name":"Age","type":"date","jsonPath":".metadata.creationTimestamp"}"#
 )]
 #[serde(rename_all = "camelCase")]
@@ -132,7 +132,8 @@ pub struct StellarNodeSpec {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(with = "serde_json::Value")]
-    pub topology_spread_constraints: Option<Vec<k8s_openapi::api::core::v1::TopologySpreadConstraint>>,
+    pub topology_spread_constraints:
+        Option<Vec<k8s_openapi::api::core::v1::TopologySpreadConstraint>>,
 }
 
 fn default_replicas() -> i32 {
@@ -200,14 +201,20 @@ impl StellarNodeSpec {
         }
 
         // Validate load balancer configuration (all node types)
+        // TODO: load_balancer field not yet implemented in StellarNodeSpec
+        /*
         if let Some(lb) = &self.load_balancer {
             validate_load_balancer(lb)?;
         }
+        */
 
         // Validate global discovery configuration
+        // TODO: global_discovery field not yet implemented in StellarNodeSpec
+        /*
         if let Some(gd) = &self.global_discovery {
             validate_global_discovery(gd)?;
         }
+        */
 
         Ok(())
     }
@@ -331,6 +338,13 @@ fn validate_global_discovery(gd: &GlobalDiscoveryConfig) -> Result<(), String> {
 pub struct StellarNodeStatus {
     /// Current phase of the node lifecycle
     /// (Pending, Creating, Running, Syncing, Ready, Failed, Degraded, Remediating, Terminating)
+    ///
+    /// DEPRECATED: Use the conditions array instead. This field is maintained for backward compatibility
+    /// and will be removed in a future version. The phase is now derived from the conditions.
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use conditions array instead. Phase is now derived from Ready/Progressing/Degraded conditions."
+    )]
     pub phase: String,
 
     /// Human-readable message about current state
@@ -342,6 +356,11 @@ pub struct StellarNodeStatus {
     pub observed_generation: Option<i64>,
 
     /// Readiness conditions following Kubernetes conventions
+    ///
+    /// Standard conditions include:
+    /// - Ready: True when all sub-resources are healthy and the node is operational
+    /// - Progressing: True when the node is being created, updated, or syncing
+    /// - Degraded: True when the node is operational but experiencing issues
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub conditions: Vec<Condition>,
 
@@ -391,6 +410,9 @@ pub struct BGPStatus {
 
 impl StellarNodeStatus {
     /// Create a new status with the given phase
+    ///
+    /// DEPRECATED: Use `with_conditions` instead
+    #[deprecated(since = "0.2.0", note = "Use with_conditions instead")]
     pub fn with_phase(phase: &str) -> Self {
         Self {
             phase: phase.to_string(),
@@ -399,13 +421,73 @@ impl StellarNodeStatus {
     }
 
     /// Update the phase and message
+    ///
+    /// DEPRECATED: Use condition helpers instead
+    #[deprecated(since = "0.2.0", note = "Use set_condition helpers instead")]
     pub fn update(&mut self, phase: &str, message: Option<&str>) {
         self.phase = phase.to_string();
         self.message = message.map(String::from);
     }
 
-    /// Check if the node is ready
+    /// Check if the node is ready based on conditions
+    ///
+    /// A node is considered ready when:
+    /// - Ready condition is True
+    /// - ready_replicas >= replicas (all replicas are ready)
     pub fn is_ready(&self) -> bool {
-        self.phase == "Ready" && self.ready_replicas >= self.replicas
+        let has_ready_condition = self
+            .conditions
+            .iter()
+            .any(|c| c.type_ == "Ready" && c.status == "True");
+
+        has_ready_condition && self.ready_replicas >= self.replicas
+    }
+
+    /// Check if the node is degraded
+    pub fn is_degraded(&self) -> bool {
+        self.conditions
+            .iter()
+            .any(|c| c.type_ == "Degraded" && c.status == "True")
+    }
+
+    /// Check if the node is progressing
+    pub fn is_progressing(&self) -> bool {
+        self.conditions
+            .iter()
+            .any(|c| c.type_ == "Progressing" && c.status == "True")
+    }
+
+    /// Get a condition by type
+    pub fn get_condition(&self, condition_type: &str) -> Option<&Condition> {
+        self.conditions.iter().find(|c| c.type_ == condition_type)
+    }
+
+    /// Derive phase from conditions for backward compatibility
+    ///
+    /// This allows existing code to continue using phase while we transition
+    /// to conditions-based status reporting
+    pub fn derive_phase_from_conditions(&self) -> String {
+        if self.is_ready() {
+            "Ready".to_string()
+        } else if self.is_degraded() {
+            "Degraded".to_string()
+        } else if self.is_progressing() {
+            "Progressing".to_string()
+        } else {
+            // Check for specific reasons
+            if let Some(ready_cond) = self.get_condition("Ready") {
+                if ready_cond.status == "False" {
+                    match ready_cond.reason.as_str() {
+                        "PodsPending" => "Pending".to_string(),
+                        "Creating" => "Creating".to_string(),
+                        _ => "NotReady".to_string(),
+                    }
+                } else {
+                    "Unknown".to_string()
+                }
+            } else {
+                "Pending".to_string()
+            }
+        }
     }
 }
