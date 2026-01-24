@@ -166,17 +166,16 @@ pub async fn delete_pvc(client: &Client, node: &StellarNode) -> Result<()> {
 /// Ensure a ConfigMap exists with node configuration
 #[instrument(skip(client, node), fields(name = %node.name_any(), namespace = node.namespace()))]
 pub async fn ensure_config_map(
-    enable_mtls: bool,
     client: &Client,
     node: &StellarNode,
     quorum_override: Option<String>,
+    enable_mtls: bool,
 ) -> Result<()> {
     let namespace = node.namespace().unwrap_or_else(|| "default".to_string());
     let api: Api<ConfigMap> = Api::namespaced(client.clone(), &namespace);
     let name = resource_name(node, "config");
 
-    let cm = build_config_map(node, enable_mtls);
-    let cm = build_config_map(node, quorum_override);
+    let cm = build_config_map(node, quorum_override, enable_mtls);
 
     let patch = Patch::Apply(&cm);
     api.patch(
@@ -189,7 +188,11 @@ pub async fn ensure_config_map(
     Ok(())
 }
 
-fn build_config_map(node: &StellarNode, quorum_override: Option<String>) -> ConfigMap {
+fn build_config_map(
+    node: &StellarNode,
+    quorum_override: Option<String>,
+    enable_mtls: bool,
+) -> ConfigMap {
     let labels = standard_labels(node);
     let name = resource_name(node, "config");
 
@@ -200,6 +203,11 @@ fn build_config_map(node: &StellarNode, quorum_override: Option<String>) -> Conf
         "NETWORK_PASSPHRASE".to_string(),
         node.spec.network.passphrase().to_string(),
     );
+
+    // Add mTLS configuration if enabled
+    if enable_mtls {
+        data.insert("MTLS_ENABLED".to_string(), "true".to_string());
+    }
 
     // Add node-type-specific configuration
     match &node.spec.node_type {
@@ -505,11 +513,22 @@ fn build_service(node: &StellarNode, enable_mtls: bool) -> Service {
 /// Ensure a LoadBalancer Service exists for external access via MetalLB
 #[instrument(skip(client, node), fields(name = %node.name_any(), namespace = node.namespace()))]
 pub async fn ensure_load_balancer_service(client: &Client, node: &StellarNode) -> Result<()> {
+    // TODO: load_balancer field not yet implemented in StellarNodeSpec
+    // Uncomment when LoadBalancerConfig is added to the spec
+    /*
     let lb_cfg = match &node.spec.load_balancer {
         Some(cfg) if cfg.enabled => cfg,
         _ => return Ok(()),
     };
+    */
 
+    // Function is disabled until load_balancer field is implemented
+    #[allow(unreachable_code)]
+    {
+        return Ok(());
+    }
+
+    /*
     let namespace = node.namespace().unwrap_or_else(|| "default".to_string());
     let api: Api<Service> = Api::namespaced(client.clone(), &namespace);
     let name = resource_name(node, "lb");
@@ -525,6 +544,7 @@ pub async fn ensure_load_balancer_service(client: &Client, node: &StellarNode) -
 
     info!("LoadBalancer Service ensured for {}/{}", namespace, name);
     Ok(())
+    */
 }
 
 fn build_load_balancer_service(node: &StellarNode, config: &LoadBalancerConfig) -> Service {
@@ -613,6 +633,8 @@ fn build_load_balancer_service(node: &StellarNode, config: &LoadBalancerConfig) 
     }
 
     // Add global discovery annotations
+    // TODO: global_discovery field not yet implemented in StellarNodeSpec
+    /*
     if let Some(gd) = &node.spec.global_discovery {
         if gd.enabled {
             if let Some(region) = &gd.region {
@@ -647,6 +669,7 @@ fn build_load_balancer_service(node: &StellarNode, config: &LoadBalancerConfig) 
             }
         }
     }
+    */
 
     let external_traffic_policy = match config.external_traffic_policy {
         ExternalTrafficPolicy::Cluster => "Cluster".to_string(),
@@ -681,6 +704,12 @@ fn build_load_balancer_service(node: &StellarNode, config: &LoadBalancerConfig) 
 /// Delete the LoadBalancer Service for a node
 #[instrument(skip(client, node), fields(name = %node.name_any(), namespace = node.namespace()))]
 pub async fn delete_load_balancer_service(client: &Client, node: &StellarNode) -> Result<()> {
+    // TODO: load_balancer field not yet implemented in StellarNodeSpec
+    #[allow(unreachable_code)]
+    {
+        return Ok(());
+    }
+    /*
     if node.spec.load_balancer.is_none() {
         return Ok(());
     }
@@ -698,6 +727,7 @@ pub async fn delete_load_balancer_service(client: &Client, node: &StellarNode) -
     }
 
     Ok(())
+    */
 }
 
 // ============================================================================
@@ -709,6 +739,12 @@ pub async fn delete_load_balancer_service(client: &Client, node: &StellarNode) -
 /// creates the recommended ConfigMap for cluster operators to reference.
 #[instrument(skip(client, node), fields(name = %node.name_any(), namespace = node.namespace()))]
 pub async fn ensure_metallb_config(client: &Client, node: &StellarNode) -> Result<()> {
+    // TODO: load_balancer field not yet implemented in StellarNodeSpec
+    #[allow(unreachable_code)]
+    {
+        return Ok(());
+    }
+    /*
     let lb_cfg = match &node.spec.load_balancer {
         Some(cfg) if cfg.enabled && cfg.mode == LoadBalancerMode::BGP => cfg,
         _ => return Ok(()),
@@ -732,6 +768,7 @@ pub async fn ensure_metallb_config(client: &Client, node: &StellarNode) -> Resul
         namespace, name
     );
     Ok(())
+    */
 }
 
 fn build_metallb_config_map(node: &StellarNode, config: &LoadBalancerConfig) -> ConfigMap {

@@ -401,6 +401,10 @@ pub struct Condition {
     pub reason: String,
     /// Human-readable message
     pub message: String,
+    /// ObservedGeneration represents the .metadata.generation that the condition was set based upon
+    /// This field is optional and should be set by controllers to track which generation was observed
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub observed_generation: Option<i64>,
 }
 
 impl Condition {
@@ -412,6 +416,7 @@ impl Condition {
             last_transition_time: chrono::Utc::now().to_rfc3339(),
             reason: reason.to_string(),
             message: message.to_string(),
+            observed_generation: None,
         }
     }
 
@@ -423,7 +428,26 @@ impl Condition {
             last_transition_time: chrono::Utc::now().to_rfc3339(),
             reason: reason.to_string(),
             message: message.to_string(),
+            observed_generation: None,
         }
+    }
+
+    /// Create a new Degraded condition
+    pub fn degraded(reason: &str, message: &str) -> Self {
+        Self {
+            type_: "Degraded".to_string(),
+            status: "True".to_string(),
+            last_transition_time: chrono::Utc::now().to_rfc3339(),
+            reason: reason.to_string(),
+            message: message.to_string(),
+            observed_generation: None,
+        }
+    }
+
+    /// Set the observed generation for this condition
+    pub fn with_observed_generation(mut self, generation: i64) -> Self {
+        self.observed_generation = Some(generation);
+        self
     }
 }
 
