@@ -92,9 +92,7 @@ async fn main() {
 }
 
 async fn run(cli: Cli) -> Result<()> {
-    let client = Client::try_default()
-        .await
-        .map_err(Error::KubeError)?;
+    let client = Client::try_default().await.map_err(Error::KubeError)?;
 
     match cli.command {
         Commands::List { all_namespaces } => {
