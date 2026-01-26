@@ -3,6 +3,7 @@
 //! The StellarNode CRD represents a managed Stellar infrastructure node.
 //! Supports Validator (Core), Horizon API, and Soroban RPC node types.
 
+use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
 use kube::CustomResource;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -97,6 +98,18 @@ pub struct StellarNodeSpec {
     #[serde(default = "default_replicas")]
     pub replicas: i32,
 
+    /// Minimum available replicas during disruptions.
+    /// Only applicable for Horizon and SorobanRpc nodes with replicas > 1.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Option<serde_json::Value>")] // Add this line
+    pub min_available: Option<IntOrString>,
+
+    /// Maximum unavailable replicas during disruptions.
+    /// Only applicable for Horizon and SorobanRpc nodes with replicas > 1.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Option<serde_json::Value>")] // Add this line
+    pub max_unavailable: Option<IntOrString>,
+
     /// Suspend the node (scale to 0 without deleting resources)
     /// The operator still manages the resources, but keeps them inactive.
     #[serde(default)]
@@ -190,6 +203,12 @@ impl StellarNodeSpec {
     /// }
     /// ```
     pub fn validate(&self) -> Result<(), String> {
+        if self.min_available.is_some() && self.max_unavailable.is_some() {
+            return Err(
+                "Cannot specify both minAvailable and maxUnavailable in PDB configuration"
+                    .to_string(),
+            );
+        }
         match self.node_type {
             NodeType::Validator => {
                 if self.validator_config.is_none() {
@@ -205,6 +224,9 @@ impl StellarNodeSpec {
                 }
                 if self.replicas != 1 {
                     return Err("Validator nodes must have exactly 1 replica".to_string());
+                }
+                if self.min_available.is_some() || self.max_unavailable.is_some() {
+                    return Err("PDB configuration is not supported for Validator nodes (replicas must be 1)".to_string());
                 }
                 if self.autoscaling.is_some() {
                     return Err("autoscaling is not supported for Validator nodes".to_string());

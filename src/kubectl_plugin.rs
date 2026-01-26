@@ -530,6 +530,8 @@ mod tests {
                 validator_config: None,
                 horizon_config: None,
                 soroban_config: None,
+                min_available: None,
+                max_unavailable: None,
                 suspended: false,
                 alerting: false,
                 database: None,

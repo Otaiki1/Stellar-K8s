@@ -22,6 +22,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use k8s_openapi::api::policy::v1::PodDisruptionBudget;
+
 use futures::StreamExt;
 use k8s_openapi::api::apps::v1::{Deployment, StatefulSet};
 use k8s_openapi::api::core::v1::{Event, PersistentVolumeClaim, Service};
@@ -130,6 +132,7 @@ pub async fn run_controller(state: Arc<ControllerState>) -> Result<()> {
         .owns::<StatefulSet>(Api::all(client.clone()), Config::default())
         .owns::<Service>(Api::all(client.clone()), Config::default())
         .owns::<PersistentVolumeClaim>(Api::all(client.clone()), Config::default())
+        .owns::<PodDisruptionBudget>(Api::all(client.clone()), Config::default())
         .shutdown_on_signal()
         .run(reconcile, error_policy, state)
         .for_each(|res| async move {
@@ -455,6 +458,8 @@ async fn apply_stellar_node(
         }
     }
 
+    // Ensure PodDisruptionBudget for multi-replica nodes
+    resources::ensure_pdb(client, node).await?;
     resources::ensure_service(client, node, ctx.enable_mtls).await?;
     resources::ensure_ingress(client, node).await?;
 

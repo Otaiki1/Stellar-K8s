@@ -22,8 +22,10 @@ use k8s_openapi::api::networking::v1::{
     IngressServiceBackend, IngressSpec, IngressTLS, NetworkPolicy, NetworkPolicyIngressRule,
     NetworkPolicyPeer, NetworkPolicyPort, NetworkPolicySpec, ServiceBackendPort,
 };
+use k8s_openapi::api::policy::v1::{PodDisruptionBudget, PodDisruptionBudgetSpec};
 use k8s_openapi::apimachinery::pkg::api::resource::Quantity;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::{LabelSelector, ObjectMeta, OwnerReference};
+use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
 use kube::api::{Api, DeleteParams, Patch, PatchParams, PostParams};
 use kube::{Client, Resource, ResourceExt};
 use tracing::{info, instrument, warn};
@@ -2021,6 +2023,93 @@ pub async fn delete_network_policy(client: &Client, node: &StellarNode) -> Resul
         Ok(_) => info!("NetworkPolicy {} deleted", name),
         Err(kube::Error::Api(e)) if e.code == 404 => {
             info!("NetworkPolicy {} not found, skipping delete", name);
+        }
+        Err(e) => return Err(Error::KubeError(e)),
+    }
+
+    Ok(())
+}
+
+// ============================================================================
+// PodDisruptionBudget (PDB)
+// ============================================================================
+
+/// Internal builder for the PodDisruptionBudget resource
+fn build_pdb(node: &StellarNode) -> Option<PodDisruptionBudget> {
+    // PDBs are only applicable if there are multiple replicas to protect
+    if node.spec.replicas <= 1 {
+        return None;
+    }
+
+    let labels = standard_labels(node);
+    let name = node.name_any();
+
+    // Determine disruption constraints: default to maxUnavailable: 1 if not specified
+    let (min_available, max_unavailable) =
+        if node.spec.min_available.is_none() && node.spec.max_unavailable.is_none() {
+            (None, Some(IntOrString::Int(1)))
+        } else {
+            (
+                node.spec.min_available.clone(),
+                node.spec.max_unavailable.clone(),
+            )
+        };
+
+    Some(PodDisruptionBudget {
+        metadata: ObjectMeta {
+            name: Some(name),
+            namespace: node.namespace(),
+            labels: Some(labels.clone()),
+            owner_references: Some(vec![owner_reference(node)]),
+            ..Default::default()
+        },
+        spec: Some(PodDisruptionBudgetSpec {
+            selector: Some(LabelSelector {
+                match_labels: Some(labels),
+                ..Default::default()
+            }),
+            min_available,
+            max_unavailable,
+            ..Default::default()
+        }),
+        status: None,
+    })
+}
+
+/// Ensure a PodDisruptionBudget exists for multi-replica nodes
+pub async fn ensure_pdb(client: &Client, node: &StellarNode) -> Result<()> {
+    // If replicas <= 1, we ensure the PDB is deleted (cleanup)
+    if node.spec.replicas <= 1 {
+        return delete_pdb(client, node).await;
+    }
+
+    let namespace = node.namespace().unwrap_or_else(|| "default".to_string());
+    let api: Api<PodDisruptionBudget> = Api::namespaced(client.clone(), &namespace);
+
+    if let Some(pdb) = build_pdb(node) {
+        let name = pdb.metadata.name.clone().unwrap();
+
+        info!("Reconciling PodDisruptionBudget {}/{}", namespace, name);
+        let params = PatchParams::apply("stellar-operator").force();
+        api.patch(&name, &params, &Patch::Apply(&pdb))
+            .await
+            .map_err(Error::KubeError)?;
+    }
+
+    Ok(())
+}
+
+/// Delete the PodDisruptionBudget
+pub async fn delete_pdb(client: &Client, node: &StellarNode) -> Result<()> {
+    let namespace = node.namespace().unwrap_or_else(|| "default".to_string());
+    let name = node.name_any();
+
+    let api: Api<PodDisruptionBudget> = Api::namespaced(client.clone(), &namespace);
+
+    match api.delete(&name, &DeleteParams::default()).await {
+        Ok(_) => info!("Deleted PodDisruptionBudget {}/{}", namespace, name),
+        Err(kube::Error::Api(e)) if e.code == 404 => {
+            // Resource doesn't exist, ignore
         }
         Err(e) => return Err(Error::KubeError(e)),
     }
