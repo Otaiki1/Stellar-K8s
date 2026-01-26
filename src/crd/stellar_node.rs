@@ -6,6 +6,8 @@
 use kube::CustomResource;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
+
 
 use super::types::{
     AutoscalingConfig, Condition, DisasterRecoveryConfig, DisasterRecoveryStatus,
@@ -139,6 +141,11 @@ pub struct StellarNodeSpec {
     #[schemars(with = "serde_json::Value")]
     pub topology_spread_constraints:
         Option<Vec<k8s_openapi::api::core::v1::TopologySpreadConstraint>>,
+
+   /// Optional labels and annotations applied to all generated Kubernetes resources
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(skip)]
+    pub resource_meta: Option<ObjectMeta>,
 }
 
 fn default_replicas() -> i32 {
