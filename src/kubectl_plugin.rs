@@ -537,6 +537,7 @@ mod tests {
                 database: None,
                 autoscaling: None,
                 ingress: None,
+                strategy: Default::default(),
                 maintenance_mode: false,
                 network_policy: None,
                 dr_config: None,
@@ -555,6 +556,8 @@ mod tests {
                 bgp_status: None,
                 ready_replicas: 1,
                 replicas: 1,
+                canary_ready_replicas: 0,
+                canary_version: None,
                 last_migrated_version: None,
             }),
         }

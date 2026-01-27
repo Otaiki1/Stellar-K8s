@@ -784,7 +784,7 @@ pub struct CanaryConfig {
     /// Percentage of traffic to route to the canary (0-100)
     #[serde(default = "default_canary_weight")]
     pub weight: i32,
-    
+
     /// Interval in seconds to wait before increasing weight or finalizing (e.g., 300)
     #[serde(default = "default_canary_interval")]
     pub check_interval_seconds: i32,

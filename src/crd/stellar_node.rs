@@ -12,7 +12,7 @@ use super::types::{
     AutoscalingConfig, Condition, DisasterRecoveryConfig, DisasterRecoveryStatus,
     ExternalDatabaseConfig, GlobalDiscoveryConfig, HorizonConfig, IngressConfig,
     LoadBalancerConfig, NetworkPolicyConfig, NodeType, ResourceRequirements, RetentionPolicy,
-    SorobanConfig, StellarNetwork, StorageConfig, ValidatorConfig,
+    RolloutStrategy, SorobanConfig, StellarNetwork, StorageConfig, ValidatorConfig,
 };
 
 /// The StellarNode CRD represents a managed Stellar infrastructure node.
@@ -563,6 +563,14 @@ pub struct StellarNodeStatus {
     #[serde(default)]
     pub replicas: i32,
 
+    /// Current number of ready canary replicas (for canary deployments)
+    #[serde(default)]
+    pub canary_ready_replicas: i32,
+
+    /// Version deployed in the canary deployment (if active)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub canary_version: Option<String>,
+
     /// Version of the database schema after last successful migration
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_migrated_version: Option<String>,
@@ -747,10 +755,13 @@ mod tests {
                 catchup_complete: false,
                 key_source: Default::default(),
                 kms_config: None,
+                vl_source: None,
             }),
             horizon_config: None,
             soroban_config: None,
             replicas: 1,
+            min_available: None,
+            max_unavailable: None,
             suspended: false,
             alerting: false,
             database: None,
@@ -760,6 +771,10 @@ mod tests {
                 weight: 10,
                 check_interval_seconds: 300,
             }),
+            maintenance_mode: false,
+            network_policy: None,
+            dr_config: None,
+            topology_spread_constraints: None,
         };
 
         assert!(spec.validate().is_err());
@@ -784,9 +799,12 @@ mod tests {
                 stellar_core_url: "http://core".to_string(),
                 ingest_workers: 1,
                 enable_experimental_ingestion: false,
+                auto_migration: false,
             }),
             soroban_config: None,
             replicas: 3,
+            min_available: None,
+            max_unavailable: None,
             suspended: false,
             alerting: false,
             database: None,
@@ -796,6 +814,10 @@ mod tests {
                 weight: 20,
                 check_interval_seconds: 300,
             }),
+            maintenance_mode: false,
+            network_policy: None,
+            dr_config: None,
+            topology_spread_constraints: None,
         };
 
         assert!(spec.validate().is_ok());

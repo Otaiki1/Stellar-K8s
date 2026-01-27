@@ -527,7 +527,11 @@ pub async fn ensure_service(client: &Client, node: &StellarNode, enable_mtls: bo
 }
 
 /// Ensure a canary Service exists if needed
-pub async fn ensure_canary_service(client: &Client, node: &StellarNode, enable_mtls: bool) -> Result<()> {
+pub async fn ensure_canary_service(
+    client: &Client,
+    node: &StellarNode,
+    enable_mtls: bool,
+) -> Result<()> {
     if node
         .status
         .as_ref()
@@ -1185,24 +1189,42 @@ pub async fn ensure_ingress(client: &Client, node: &StellarNode) -> Result<()> {
     .await?;
 
     info!("Ingress ensured for {}/{}", namespace, name);
-    
+
     // If canary is active, ensure canary ingress as well
     if let RolloutStrategy::Canary(ref cfg) = node.spec.strategy {
-        if node.status.as_ref().and_then(|status| status.canary_version.as_ref()).is_some() {
+        if node
+            .status
+            .as_ref()
+            .and_then(|status| status.canary_version.as_ref())
+            .is_some()
+        {
             let canary_name = format!("{}-canary", name);
             let mut canary_ingress = build_ingress(node, ingress_cfg);
             canary_ingress.metadata.name = Some(canary_name.clone());
-            
+
             // Add canary annotations
-            let mut annotations = canary_ingress.metadata.annotations.clone().unwrap_or_default();
-            annotations.insert("nginx.ingress.kubernetes.io/canary".to_string(), "true".to_string());
-            annotations.insert("nginx.ingress.kubernetes.io/canary-weight".to_string(), cfg.weight.to_string());
-            
+            let mut annotations = canary_ingress
+                .metadata
+                .annotations
+                .clone()
+                .unwrap_or_default();
+            annotations.insert(
+                "nginx.ingress.kubernetes.io/canary".to_string(),
+                "true".to_string(),
+            );
+            annotations.insert(
+                "nginx.ingress.kubernetes.io/canary-weight".to_string(),
+                cfg.weight.to_string(),
+            );
+
             // Support for Traefik and Istio (Istio usually needs VirtualService, but some setups use Ingress annotations)
-            annotations.insert("traefik.ingress.kubernetes.io/service.weights".to_string(), format!("{}:{}", node.name_any(), cfg.weight));
-            
+            annotations.insert(
+                "traefik.ingress.kubernetes.io/service.weights".to_string(),
+                format!("{}:{}", node.name_any(), cfg.weight),
+            );
+
             canary_ingress.metadata.annotations = Some(annotations);
-            
+
             // Update backend to point to canary service
             if let Some(spec) = &mut canary_ingress.spec {
                 if let Some(rules) = &mut spec.rules {
@@ -1986,7 +2008,9 @@ pub async fn delete_canary_resources(client: &Client, node: &StellarNode) -> Res
 
     // 3. Delete Canary Deployment
     let api_deploy: Api<Deployment> = Api::namespaced(client.clone(), &namespace);
-    let _ = api_deploy.delete(&canary_name, &DeleteParams::default()).await;
+    let _ = api_deploy
+        .delete(&canary_name, &DeleteParams::default())
+        .await;
 
     Ok(())
 }

@@ -39,7 +39,9 @@ use kube::{
 };
 use tracing::{debug, error, info, instrument, warn};
 
-use crate::crd::{DisasterRecoveryStatus, NodeType, StellarNode, StellarNodeStatus};
+use crate::crd::{
+    DisasterRecoveryStatus, NodeType, RolloutStrategy, StellarNode, StellarNodeStatus,
+};
 use crate::error::{Error, Result};
 
 use super::archive_health::{calculate_backoff, check_history_archive_health, ArchiveHealthResult};
@@ -471,13 +473,18 @@ async fn apply_stellar_node(
                 resources::ensure_canary_deployment(client, node, ctx.enable_mtls).await?;
                 resources::ensure_canary_service(client, node, ctx.enable_mtls).await?;
 
-                // For canary, the main deployment should stay at the OLD version 
+                // For canary, the main deployment should stay at the OLD version
                 // IF we are in the middle of a rollout.
-                if node.status.as_ref().and_then(|status| status.canary_version.as_ref()).is_some() {
+                if node
+                    .status
+                    .as_ref()
+                    .and_then(|status| status.canary_version.as_ref())
+                    .is_some()
+                {
                     let mut stable_node = node.clone();
                     // Recover the stable version from the existing deployment if possible
                     if let Some(cv) = get_current_deployment_version(client, node).await? {
-                         stable_node.spec.version = cv;
+                        stable_node.spec.version = cv;
                     }
                     resources::ensure_deployment(client, &stable_node, ctx.enable_mtls).await?;
                 } else {
@@ -487,7 +494,7 @@ async fn apply_stellar_node(
                 // RPC nodes use Deployment
                 resources::ensure_deployment(client, node, ctx.enable_mtls).await?;
                 info!("Deployment ensured for RPC node {}/{}", namespace, name);
-                
+
                 // Clean up canary resources if they exist
                 resources::delete_canary_resources(client, node).await?;
             }
@@ -598,7 +605,7 @@ async fn apply_stellar_node(
     update_status(client, node, phase, Some(&message), ready_replicas, true).await?;
 
     // 9. Update status with ready replica count
-    let mut phase = if node.spec.suspended {
+    let phase = if node.spec.suspended {
         "Suspended"
     } else if node
         .status
@@ -764,6 +771,7 @@ async fn get_ready_replicas(client: &Client, node: &StellarNode) -> Result<i32> 
 }
 
 /// Fetch the ready replicas for the canary deployment
+#[allow(dead_code)]
 async fn get_canary_ready_replicas(client: &Client, node: &StellarNode) -> Result<i32> {
     let namespace = node.namespace().unwrap_or_else(|| "default".to_string());
     let name = format!("{}-canary", node.name_any());
@@ -783,7 +791,10 @@ async fn get_canary_ready_replicas(client: &Client, node: &StellarNode) -> Resul
 }
 
 /// Get the current version of the stable deployment
-async fn get_current_deployment_version(client: &Client, node: &StellarNode) -> Result<Option<String>> {
+async fn get_current_deployment_version(
+    client: &Client,
+    node: &StellarNode,
+) -> Result<Option<String>> {
     let namespace = node.namespace().unwrap_or_else(|| "default".to_string());
     let name = node.name_any();
 
@@ -796,7 +807,7 @@ async fn get_current_deployment_version(client: &Client, node: &StellarNode) -> 
                 .and_then(|s| s.template.spec.as_ref())
                 .and_then(|ts| ts.containers.first())
                 .and_then(|c| c.image.as_ref())
-                .and_then(|img| img.split(':').last())
+                .and_then(|img| img.split(':').next_back())
                 .map(|v| v.to_string());
             Ok(version)
         }
@@ -805,14 +816,18 @@ async fn get_current_deployment_version(client: &Client, node: &StellarNode) -> 
 }
 
 /// Check health of canary pods
-async fn check_canary_health(client: &Client, node: &StellarNode) -> Result<health::HealthCheckResult> {
+#[allow(dead_code)]
+async fn check_canary_health(
+    client: &Client,
+    node: &StellarNode,
+) -> Result<health::HealthCheckResult> {
     let _namespace = node.namespace().unwrap_or_else(|| "default".to_string());
     let name = format!("{}-canary", node.name_any());
-    
+
     // Create a temporary node with the canary name to use the existing health check logic
     let mut canary_node = node.clone();
     canary_node.metadata.name = Some(name);
-    
+
     health::check_node_health(client, &canary_node, None).await
 }
 
@@ -1276,6 +1291,7 @@ async fn update_status_with_health(
 }
 
 /// Update the status subresource with canary information
+#[allow(dead_code)]
 async fn update_status_with_canary(
     client: &Client,
     node: &StellarNode,
@@ -1288,11 +1304,16 @@ async fn update_status_with_canary(
     let namespace = node.namespace().unwrap_or_else(|| "default".to_string());
     let api: Api<StellarNode> = Api::namespaced(client.clone(), &namespace);
 
+    #[allow(deprecated)]
     let status = StellarNodeStatus {
         phase: phase.to_string(),
         message: message.map(String::from),
         observed_generation: node.metadata.generation,
-        replicas: if node.spec.suspended { 0 } else { node.spec.replicas },
+        replicas: if node.spec.suspended {
+            0
+        } else {
+            node.spec.replicas
+        },
         ready_replicas,
         canary_ready_replicas,
         canary_version,
