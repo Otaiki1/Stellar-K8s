@@ -9,10 +9,11 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::types::{
-    AutoscalingConfig, Condition, DisasterRecoveryConfig, DisasterRecoveryStatus,
-    ExternalDatabaseConfig, GlobalDiscoveryConfig, HorizonConfig, IngressConfig,
-    LoadBalancerConfig, NetworkPolicyConfig, NodeType, ResourceRequirements, RetentionPolicy,
-    RolloutStrategy, SorobanConfig, StellarNetwork, StorageConfig, ValidatorConfig,
+    AutoscalingConfig, Condition, CrossClusterConfig, DisasterRecoveryConfig,
+    DisasterRecoveryStatus, ExternalDatabaseConfig, GlobalDiscoveryConfig, HorizonConfig,
+    IngressConfig, LoadBalancerConfig, NetworkPolicyConfig, NodeType, ResourceRequirements,
+    RetentionPolicy, RolloutStrategy, SorobanConfig, StellarNetwork, StorageConfig,
+    ValidatorConfig,
 };
 
 /// The StellarNode CRD represents a managed Stellar infrastructure node.
@@ -157,6 +158,17 @@ pub struct StellarNodeSpec {
     #[schemars(with = "serde_json::Value")]
     pub topology_spread_constraints:
         Option<Vec<k8s_openapi::api::core::v1::TopologySpreadConstraint>>,
+
+    /// Cluster identifier for multi-cluster deployments
+    /// Used to identify which cluster this node belongs to for cross-cluster communication
+    /// Example: "us-east-1", "eu-west-1", "ap-south-1"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cluster: Option<String>,
+
+    /// Cross-cluster communication configuration
+    /// Enables service mesh or ExternalName services for multi-cluster networking
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cross_cluster: Option<CrossClusterConfig>,
 }
 
 fn default_replicas() -> i32 {
@@ -204,6 +216,8 @@ impl StellarNodeSpec {
     /// # network_policy: None,
     /// # dr_config: None,
     /// # topology_spread_constraints: None,
+    /// # cluster: None,
+    /// # cross_cluster: None,
     /// };
     /// match spec.validate() {
     ///     Ok(_) => println!("Valid spec"),
@@ -296,6 +310,11 @@ impl StellarNodeSpec {
         }
         */
 
+        // Validate cross-cluster configuration
+        if let Some(cc) = &self.cross_cluster {
+            validate_cross_cluster(cc)?;
+        }
+
         Ok(())
     }
 
@@ -338,6 +357,8 @@ impl StellarNodeSpec {
     /// # network_policy: None,
     /// # dr_config: None,
     /// # topology_spread_constraints: None,
+    /// # cluster: None,
+    /// # cross_cluster: None,
     /// };
     /// assert_eq!(spec.container_image(), "stellar/stellar-core:v21.0.0");
     /// ```
@@ -391,6 +412,8 @@ impl StellarNodeSpec {
     /// # network_policy: None,
     /// # dr_config: None,
     /// # topology_spread_constraints: None,
+    /// # cluster: None,
+    /// # cross_cluster: None,
     /// };
     /// assert!(spec.should_delete_pvc());
     /// ```
@@ -491,6 +514,126 @@ fn validate_global_discovery(gd: &GlobalDiscoveryConfig) -> Result<(), String> {
         }
         if dns.ttl == 0 {
             return Err("globalDiscovery.externalDns.ttl must be greater than 0".to_string());
+        }
+    }
+
+    Ok(())
+}
+
+#[allow(dead_code)]
+fn validate_cross_cluster(cc: &CrossClusterConfig) -> Result<(), String> {
+    use super::types::{CrossClusterMeshType, CrossClusterMode};
+
+    if !cc.enabled {
+        return Ok(());
+    }
+
+    // Validate service mesh configuration
+    if cc.mode == CrossClusterMode::ServiceMesh {
+        if let Some(mesh) = &cc.service_mesh {
+            if mesh.cluster_set_id.is_none()
+                && (mesh.mesh_type == CrossClusterMeshType::Submariner
+                    || mesh.mesh_type == CrossClusterMeshType::Istio)
+            {
+                return Err(
+                    "crossCluster.serviceMesh.clusterSetId is required for Submariner and Istio"
+                        .to_string(),
+                );
+            }
+        } else {
+            return Err(
+                "crossCluster.serviceMesh configuration is required when mode is ServiceMesh"
+                    .to_string(),
+            );
+        }
+    }
+
+    // Validate ExternalName configuration
+    if cc.mode == CrossClusterMode::ExternalName {
+        if let Some(ext) = &cc.external_name {
+            if ext.external_dns_name.trim().is_empty() {
+                return Err(
+                    "crossCluster.externalName.externalDnsName must not be empty".to_string(),
+                );
+            }
+        } else {
+            return Err(
+                "crossCluster.externalName configuration is required when mode is ExternalName"
+                    .to_string(),
+            );
+        }
+    }
+
+    // Validate peer clusters
+    for (i, peer) in cc.peer_clusters.iter().enumerate() {
+        if peer.cluster_id.trim().is_empty() {
+            return Err(format!(
+                "crossCluster.peerClusters[{}].clusterId must not be empty",
+                i
+            ));
+        }
+        if peer.endpoint.trim().is_empty() {
+            return Err(format!(
+                "crossCluster.peerClusters[{}].endpoint must not be empty",
+                i
+            ));
+        }
+        if let Some(threshold) = peer.latency_threshold_ms {
+            if threshold == 0 {
+                return Err(format!(
+                    "crossCluster.peerClusters[{}].latencyThresholdMs must be greater than 0",
+                    i
+                ));
+            }
+        }
+    }
+
+    // Validate latency threshold
+    if cc.latency_threshold_ms == 0 {
+        return Err("crossCluster.latencyThresholdMs must be greater than 0".to_string());
+    }
+
+    // Validate health check configuration
+    if let Some(hc) = &cc.health_check {
+        if hc.enabled {
+            if hc.interval_seconds == 0 {
+                return Err(
+                    "crossCluster.healthCheck.intervalSeconds must be greater than 0".to_string(),
+                );
+            }
+            if hc.timeout_seconds == 0 {
+                return Err(
+                    "crossCluster.healthCheck.timeoutSeconds must be greater than 0".to_string(),
+                );
+            }
+            if hc.timeout_seconds >= hc.interval_seconds {
+                return Err(
+                    "crossCluster.healthCheck.timeoutSeconds must be less than intervalSeconds"
+                        .to_string(),
+                );
+            }
+            if hc.failure_threshold == 0 {
+                return Err(
+                    "crossCluster.healthCheck.failureThreshold must be greater than 0".to_string(),
+                );
+            }
+            if hc.success_threshold == 0 {
+                return Err(
+                    "crossCluster.healthCheck.successThreshold must be greater than 0".to_string(),
+                );
+            }
+
+            // Validate latency measurement
+            if let Some(lm) = &hc.latency_measurement {
+                if lm.enabled {
+                    if lm.sample_count == 0 {
+                        return Err("crossCluster.healthCheck.latencyMeasurement.sampleCount must be greater than 0".to_string());
+                    }
+                    if lm.percentile == 0 || lm.percentile > 100 {
+                        return Err("crossCluster.healthCheck.latencyMeasurement.percentile must be between 1 and 100".to_string());
+                    }
+                }
+            }
         }
     }
 
@@ -785,6 +928,8 @@ mod tests {
             network_policy: None,
             dr_config: None,
             topology_spread_constraints: None,
+            cluster: None,
+            cross_cluster: None,
         };
 
         assert!(spec.validate().is_err());
@@ -828,6 +973,8 @@ mod tests {
             network_policy: None,
             dr_config: None,
             topology_spread_constraints: None,
+            cluster: None,
+            cross_cluster: None,
         };
 
         assert!(spec.validate().is_ok());
