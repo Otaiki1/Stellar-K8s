@@ -762,19 +762,14 @@ impl Default for NetworkPolicyConfig {
 }
 
 /// Rollout strategy for updates
-#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum RolloutStrategy {
     /// Standard Kubernetes rolling update
+    #[default]
     RollingUpdate,
     /// Canary deployment with traffic weighting
     Canary(CanaryConfig),
-}
-
-impl Default for RolloutStrategy {
-    fn default() -> Self {
-        Self::RollingUpdate
-    }
 }
 
 /// Configuration for Canary rollout
