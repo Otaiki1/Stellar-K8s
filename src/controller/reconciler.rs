@@ -40,7 +40,8 @@ use kube::{
 use tracing::{debug, error, info, instrument, warn};
 
 use crate::crd::{
-    DisasterRecoveryStatus, NodeType, RolloutStrategy, StellarNode, StellarNodeStatus,
+    DisasterRecoveryStatus, NodeType, RolloutStrategy, SpecValidationError, StellarNode,
+    StellarNodeStatus,
 };
 use crate::error::{Error, Result};
 
@@ -183,6 +184,28 @@ async fn emit_event(
     Ok(())
 }
 
+/// Format structured spec validation errors into a user-friendly message
+fn format_spec_validation_errors(errors: &[SpecValidationError]) -> String {
+    let mut msg = String::from("Spec validation failed with the following issues:\n");
+    for e in errors {
+        msg.push_str(&format!(
+            "- Field `{}`: {}\n  How to fix: {}\n",
+            e.field, e.message, e.how_to_fix
+        ));
+    }
+    msg.trim_end().to_string()
+}
+
+/// Emit a single grouped Kubernetes Event for all spec validation errors
+async fn emit_spec_validation_event(
+    client: &Client,
+    node: &StellarNode,
+    errors: &[SpecValidationError],
+) -> Result<()> {
+    let message = format_spec_validation_errors(errors);
+    emit_event(client, node, "Warning", "SpecValidationFailed", &message).await
+}
+
 /// The main reconciliation function
 ///
 /// This function is called whenever:
@@ -226,10 +249,12 @@ async fn apply_stellar_node(
     info!("Applying StellarNode: {}/{}", namespace, name);
 
     // Validate the spec
-    if let Err(e) = node.spec.validate() {
-        warn!("Validation failed for {}/{}: {}", namespace, name, e);
-        update_status(client, node, "Failed", Some(e.as_str()), 0, true).await?;
-        return Err(Error::ValidationError(e));
+    if let Err(errors) = node.spec.validate() {
+        let message = format_spec_validation_errors(&errors);
+        warn!("Validation failed for {}/{}: {}", namespace, name, message);
+        emit_spec_validation_event(client, node, &errors).await?;
+        update_status(client, node, "Failed", Some(&message), 0, true).await?;
+        return Err(Error::ValidationError(message));
     }
 
     // 1. Core infrastructure (PVC and ConfigMap) always managed by operator
