@@ -1070,6 +1070,7 @@ mod tests {
             node_type: NodeType::Validator,
             network: StellarNetwork::Testnet,
             version: "v21.0.0".to_string(),
+            history_mode: Default::default(),
             resources: Default::default(),
             storage: Default::default(),
             validator_config: Some(ValidatorConfig {
@@ -1116,6 +1117,7 @@ mod tests {
             node_type: NodeType::Horizon,
             network: StellarNetwork::Testnet,
             version: "v21.0.0".to_string(),
+            history_mode: Default::default(),
             resources: Default::default(),
             storage: Default::default(),
             validator_config: None,
