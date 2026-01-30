@@ -13,7 +13,7 @@ use super::types::{
     DisasterRecoveryStatus, ExternalDatabaseConfig, GlobalDiscoveryConfig, HistoryMode,
     HorizonConfig, IngressConfig, LoadBalancerConfig, NetworkPolicyConfig, NodeType,
     ResourceRequirements, RetentionPolicy, RolloutStrategy, SorobanConfig, StellarNetwork,
-    StorageConfig, ValidatorConfig,
+    StorageConfig, ValidatorConfig, ManagedDatabaseConfig,
 };
 
 /// Structured validation error for `StellarNodeSpec`
@@ -157,6 +157,12 @@ pub struct StellarNodeSpec {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub database: Option<ExternalDatabaseConfig>,
 
+    /// Managed database configuration for automated HA Postgres clusters
+    /// When provided, the operator will provision a CloudNativePG Cluster
+    /// and inject connection credentials into the container
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub managed_database: Option<ManagedDatabaseConfig>,
+
     /// Horizontal Pod Autoscaling configuration
     /// Only applicable to Horizon and SorobanRpc nodes
     /// Validators do not support autoscaling (always 1 replica)
@@ -249,6 +255,7 @@ impl StellarNodeSpec {
     /// # suspended: false,
     /// # alerting: false,
     /// # database: None,
+    /// # managed_database: None,
     /// # autoscaling: None,
     /// # ingress: None,
     /// # strategy: Default::default(),
@@ -272,6 +279,14 @@ impl StellarNodeSpec {
     /// ```
     pub fn validate(&self) -> Result<(), Vec<SpecValidationError>> {
         let mut errors: Vec<SpecValidationError> = Vec::new();
+
+        if self.database.is_some() && self.managed_database.is_some() {
+            errors.push(SpecValidationError::new(
+                "spec.database / spec.managedDatabase",
+                "Cannot specify both database (external) and managedDatabase",
+                "Choose either an external database using spec.database or a managed one using spec.managedDatabase.",
+            ));
+        }
 
         if self.min_available.is_some() && self.max_unavailable.is_some() {
             errors.push(SpecValidationError::new(
@@ -454,6 +469,7 @@ impl StellarNodeSpec {
     /// # suspended: false,
     /// # alerting: false,
     /// # database: None,
+    /// # managed_database: None,
     /// # autoscaling: None,
     /// # ingress: None,
     /// # strategy: Default::default(),
@@ -512,6 +528,7 @@ impl StellarNodeSpec {
     /// # suspended: false,
     /// # alerting: false,
     /// # database: None,
+    /// # managed_database: None,
     /// # autoscaling: None,
     /// # ingress: None,
     /// # strategy: Default::default(),
@@ -1095,6 +1112,7 @@ mod tests {
             suspended: false,
             alerting: false,
             database: None,
+            managed_database: None,
             autoscaling: None,
             ingress: None,
             strategy: RolloutStrategy::Canary(CanaryConfig {
@@ -1139,6 +1157,7 @@ mod tests {
             suspended: false,
             alerting: false,
             database: None,
+            managed_database: None,
             autoscaling: None,
             ingress: None,
             strategy: RolloutStrategy::Canary(CanaryConfig {
