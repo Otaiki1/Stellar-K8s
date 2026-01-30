@@ -236,6 +236,7 @@ mod tests {
                 suspended: false,
                 alerting: false,
                 database: None,
+                // Added this field to resolve the E0063 error
                 managed_database: None,
                 autoscaling: None,
                 ingress: None,
@@ -245,6 +246,10 @@ mod tests {
                 strategy: Default::default(),
                 maintenance_mode: false,
                 network_policy: None,
+                load_balancer: None,
+                global_discovery: None,
+                cross_cluster: None,
+                cluster: None,
                 dr_config: None,
                 topology_spread_constraints: None,
                 resource_meta: None,
