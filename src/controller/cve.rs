@@ -7,10 +7,9 @@ use kube::{
 };
 use reqwest::Client as HttpClient;
 use serde::{Deserialize, Serialize};
-use std::time::Instant;
 use tracing::{debug, info, warn};
 
-use crate::crd::{CVEHandlingConfig, NodeType, StellarNode};
+use crate::crd::{NodeType, StellarNode};
 use crate::error::{Error, Result};
 
 // Annotation keys for CVE tracking
@@ -23,8 +22,11 @@ pub const CANARY_TEST_STATUS_ANNOTATION: &str = "stellar.org/canary-test-status"
 pub const CVE_ROLLOUT_STATUS_ANNOTATION: &str = "stellar.org/cve-rollout-status";
 pub const CVE_ROLLBACK_REASON_ANNOTATION: &str = "stellar.org/cve-rollback-reason";
 
+#[allow(dead_code)]
 const CANARY_TEST_TIMEOUT_SECS: u64 = 300;
+#[allow(dead_code)]
 const CONSENSUS_HEALTH_CHECK_INTERVAL_SECS: u64 = 30;
+#[allow(dead_code)]
 const CONSENSUS_HEALTH_DEGRADATION_THRESHOLD: f64 = 0.95;
 
 /// Result of a CVE scan from registry scanner
@@ -238,6 +240,7 @@ struct TrivyScanRequest {
 
 /// Trivy API response for vulnerabilities
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 #[serde(rename_all = "PascalCase")]
 struct TrivyVulnerability {
     #[serde(default)]
@@ -271,6 +274,7 @@ struct TrivyScanResponse {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 #[serde(rename_all = "PascalCase")]
 struct TrivyArtifact {
     #[serde(default)]
@@ -281,6 +285,7 @@ struct TrivyArtifact {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 #[serde(rename_all = "PascalCase")]
 struct TrivyMisconfiguration {
     #[serde(default)]
@@ -288,6 +293,7 @@ struct TrivyMisconfiguration {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 #[serde(rename_all = "PascalCase")]
 struct TrivyResult {
     #[serde(default)]
@@ -547,20 +553,23 @@ pub async fn create_canary_deployment(
     let deployments_api: Api<Deployment> = Api::namespaced(client.clone(), &namespace);
 
     // Build a minimal canary deployment spec
-    let mut canary_deployment = Deployment::default();
-    canary_deployment.metadata = ObjectMeta {
-        name: Some(canary_deployment_name.clone()),
-        namespace: Some(namespace.clone()),
-        labels: Some({
-            let mut labels = std::collections::BTreeMap::new();
-            labels.insert("app".to_string(), node.name_any());
-            labels.insert("cve-canary".to_string(), "true".to_string());
-            labels
-        }),
-        ..Default::default()
+    let mut labels = std::collections::BTreeMap::new();
+    labels.insert("app".to_string(), node.name_any());
+    labels.insert("cve-canary".to_string(), "true".to_string());
+
+    let canary_deployment = Deployment {
+        metadata: ObjectMeta {
+            name: Some(canary_deployment_name.clone()),
+            namespace: Some(namespace.clone()),
+            labels: Some(labels.clone()),
+            ..Default::default()
+        },
+        spec: None,
+        status: None,
     };
 
     // Set spec with single replica and patched image
+    let mut canary_deployment = canary_deployment;
     if let Some(spec) = &mut canary_deployment.spec {
         spec.replicas = Some(1);
         let template = &mut spec.template;
@@ -648,7 +657,7 @@ pub async fn trigger_rolling_update(
     let mut node_patch = node.clone();
     node_patch.spec.version = patched_image
         .split(':')
-        .last()
+        .next_back()
         .unwrap_or("latest")
         .to_string();
 

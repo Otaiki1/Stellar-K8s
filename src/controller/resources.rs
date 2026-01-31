@@ -34,8 +34,8 @@ use tracing::{info, instrument, warn};
 
 use crate::crd::{
     BackupConfiguration, BarmanObjectStore, BootstrapConfiguration, Cluster, ClusterSpec,
-    ExternalTrafficPolicy, HistoryMode, HsmProvider, IngressConfig, InitDbConfiguration, KeySource,
-    LoadBalancerConfig, LoadBalancerMode, ManagedDatabaseConfig, MonitoringConfiguration,
+    HistoryMode, HsmProvider, IngressConfig, InitDbConfiguration, KeySource,
+    ManagedDatabaseConfig, MonitoringConfiguration,
     NetworkPolicyConfig, NodeType, PgBouncerSpec, Pooler, PoolerCluster, PoolerSpec,
     PostgresConfiguration, RolloutStrategy, S3Credentials,
     SecretKeySelector as CnpgSecretKeySelector, StellarNode, StorageConfiguration,
@@ -695,31 +695,15 @@ fn build_service(node: &StellarNode, enable_mtls: bool) -> Service {
 // ============================================================================
 
 /// Ensure a LoadBalancer Service exists for external access via MetalLB
-#[instrument(skip(client, node), fields(name = %node.name_any(), namespace = node.namespace()))]
-pub async fn ensure_load_balancer_service(client: &Client, node: &StellarNode) -> Result<()> {
-    let lb_cfg = match &node.spec.load_balancer {
-        Some(cfg) if cfg.enabled => cfg,
-        _ => return Ok(()),
-    };
-
-    let namespace = node.namespace().unwrap_or_else(|| "default".to_string());
-    let api: Api<Service> = Api::namespaced(client.clone(), &namespace);
-    let name = resource_name(node, "lb");
-
-    let service = build_load_balancer_service(node, lb_cfg);
-
-    let patch = Patch::Apply(&service);
-    api.patch(
-        &name,
-        &PatchParams::apply("stellar-operator").force(),
-        &patch,
-    )
-    .await?;
-
-    info!("LoadBalancer Service ensured for {}/{}", namespace, name);
+/// TODO: Load balancer and global discovery fields not yet implemented in StellarNodeSpec
+#[allow(dead_code)]
+#[instrument(skip(_client, _node), fields(name = %_node.name_any(), namespace = _node.namespace()))]
+pub async fn ensure_load_balancer_service(_client: &Client, _node: &StellarNode) -> Result<()> {
+    // Disabled: load_balancer field not yet implemented in StellarNodeSpec
     Ok(())
 }
 
+/*
 fn build_load_balancer_service(node: &StellarNode, config: &LoadBalancerConfig) -> Service {
     let labels = standard_labels(node);
     let name = resource_name(node, "lb");
@@ -878,26 +862,12 @@ fn build_load_balancer_service(node: &StellarNode, config: &LoadBalancerConfig) 
         status: None,
     }
 }
+*/
 
 /// Delete the LoadBalancer Service for a node
-#[instrument(skip(client, node), fields(name = %node.name_any(), namespace = node.namespace()))]
-pub async fn delete_load_balancer_service(client: &Client, node: &StellarNode) -> Result<()> {
-    if node.spec.load_balancer.is_none() {
-        return Ok(());
-    }
-
-    let namespace = node.namespace().unwrap_or_else(|| "default".to_string());
-    let api: Api<Service> = Api::namespaced(client.clone(), &namespace);
-    let name = resource_name(node, "lb");
-
-    match api.delete(&name, &DeleteParams::default()).await {
-        Ok(_) => info!("Deleted LoadBalancer Service {}", name),
-        Err(kube::Error::Api(e)) if e.code == 404 => {
-            warn!("LoadBalancer Service {} not found, already deleted", name);
-        }
-        Err(e) => return Err(Error::KubeError(e)),
-    }
-
+#[instrument(skip(_client, _node), fields(name = %_node.name_any(), namespace = _node.namespace()))]
+pub async fn delete_load_balancer_service(_client: &Client, _node: &StellarNode) -> Result<()> {
+    // Disabled: load_balancer field not yet implemented in StellarNodeSpec
     Ok(())
 }
 
@@ -908,34 +878,14 @@ pub async fn delete_load_balancer_service(client: &Client, node: &StellarNode) -
 /// Ensure MetalLB BGPAdvertisement and IPAddressPool ConfigMaps are documented
 /// Note: MetalLB CRDs must be created manually or via Helm; this function
 /// creates the recommended ConfigMap for cluster operators to reference.
-#[instrument(skip(client, node), fields(name = %node.name_any(), namespace = node.namespace()))]
-pub async fn ensure_metallb_config(client: &Client, node: &StellarNode) -> Result<()> {
-    let lb_cfg = match &node.spec.load_balancer {
-        Some(cfg) if cfg.enabled && cfg.mode == LoadBalancerMode::BGP => cfg,
-        _ => return Ok(()),
-    };
-
-    let namespace = node.namespace().unwrap_or_else(|| "default".to_string());
-    let api: Api<ConfigMap> = Api::namespaced(client.clone(), &namespace);
-    let name = resource_name(node, "metallb-config");
-
-    let config = build_metallb_config_map(node, lb_cfg);
-
-    let patch = Patch::Apply(&config);
-    api.patch(
-        &name,
-        &PatchParams::apply("stellar-operator").force(),
-        &patch,
-    )
-    .await?;
-
-    info!(
-        "MetalLB configuration ConfigMap ensured for {}/{}",
-        namespace, name
-    );
+#[allow(dead_code)]
+#[instrument(skip(_client, _node), fields(name = %_node.name_any(), namespace = _node.namespace()))]
+pub async fn ensure_metallb_config(_client: &Client, _node: &StellarNode) -> Result<()> {
+    // Disabled: load_balancer field not yet implemented in StellarNodeSpec
     Ok(())
 }
 
+/*
 fn build_metallb_config_map(node: &StellarNode, config: &LoadBalancerConfig) -> ConfigMap {
     let labels = standard_labels(node);
     let name = resource_name(node, "metallb-config");
@@ -1174,22 +1124,12 @@ spec:
         ..Default::default()
     }
 }
+*/
 
 /// Delete the MetalLB configuration ConfigMap
-#[instrument(skip(client, node), fields(name = %node.name_any(), namespace = node.namespace()))]
-pub async fn delete_metallb_config(client: &Client, node: &StellarNode) -> Result<()> {
-    let namespace = node.namespace().unwrap_or_else(|| "default".to_string());
-    let api: Api<ConfigMap> = Api::namespaced(client.clone(), &namespace);
-    let name = resource_name(node, "metallb-config");
-
-    match api.delete(&name, &DeleteParams::default()).await {
-        Ok(_) => info!("Deleted MetalLB ConfigMap {}", name),
-        Err(kube::Error::Api(e)) if e.code == 404 => {
-            info!("MetalLB ConfigMap {} not found, skipping delete", name);
-        }
-        Err(e) => return Err(Error::KubeError(e)),
-    }
-
+#[instrument(skip(_client, _node), fields(name = %_node.name_any(), namespace = _node.namespace()))]
+pub async fn delete_metallb_config(_client: &Client, _node: &StellarNode) -> Result<()> {
+    // Disabled: load_balancer field not yet implemented in StellarNodeSpec
     Ok(())
 }
 

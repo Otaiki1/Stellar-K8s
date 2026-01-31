@@ -4,6 +4,7 @@
 //! Supports Validator (Core), Horizon API, and Soroban RPC node types.
 
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
+use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
 use kube::CustomResource;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -408,15 +409,16 @@ impl StellarNodeSpec {
             }
         }
 
+        // TODO: Load balancer and global discovery fields not yet implemented in StellarNodeSpec
         // Validate load balancer configuration (all node types)
-        if let Some(lb) = &self.load_balancer {
-            validate_load_balancer(lb, &mut errors);
-        }
+        // if let Some(lb) = &self.load_balancer {
+        //     validate_load_balancer(lb, &mut errors);
+        // }
 
         // Validate global discovery configuration
-        if let Some(gd) = &self.global_discovery {
-            validate_global_discovery(gd, &mut errors);
-        }
+        // if let Some(gd) = &self.global_discovery {
+        //     validate_global_discovery(gd, &mut errors);
+        // }
 
         // Validate cross-cluster configuration
         if let Some(cc) = &self.cross_cluster {
@@ -1111,11 +1113,10 @@ mod tests {
             network_policy: None,
             dr_config: None,
             topology_spread_constraints: None,
-            load_balancer: None,
-            global_discovery: None,
             cluster: None,
             cross_cluster: None,
             cve_handling: None,
+            resource_meta: None,
         };
 
         assert!(spec.validate().is_err());
@@ -1157,11 +1158,10 @@ mod tests {
             network_policy: None,
             dr_config: None,
             topology_spread_constraints: None,
-            load_balancer: None,
-            global_discovery: None,
             cluster: None,
             cross_cluster: None,
             cve_handling: None,
+            resource_meta: None,
         };
 
         assert!(spec.validate().is_ok());

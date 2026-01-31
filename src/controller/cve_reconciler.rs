@@ -100,7 +100,6 @@ async fn scan_and_initiate_patch(
     let scan_result = scanner.scan_image(&image).await?;
 
     // Update scan timestamp
-    let nodes_api: Api<StellarNode> = Api::namespaced(client.clone(), &namespace);
     let mut annotations = node.metadata.annotations.clone().unwrap_or_default();
     annotations.insert(
         CVE_SCAN_TIME_ANNOTATION.to_string(),
@@ -193,7 +192,6 @@ async fn initiate_canary_deployment(
     let canary_name = create_canary_deployment(client, node, patched_image).await?;
 
     // Update node annotations to track canary deployment
-    let nodes_api: Api<StellarNode> = Api::namespaced(client.clone(), &namespace);
     let mut annotations = node.metadata.annotations.clone().unwrap_or_default();
     annotations.insert(
         CANARY_DEPLOYMENT_ANNOTATION.to_string(),
@@ -496,7 +494,7 @@ async fn get_node_image(client: &Client, node: &StellarNode) -> Result<String> {
         Ok(deployments) => {
             if let Some(deployment) = deployments.items.first() {
                 if let Some(spec) = &deployment.spec {
-                    if let Some(metadata) = &spec.template.metadata {
+                    if let Some(_metadata) = &spec.template.metadata {
                         if let Some(containers) = &spec
                             .template
                             .spec

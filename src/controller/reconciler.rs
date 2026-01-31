@@ -677,8 +677,9 @@ async fn apply_stellar_node(
         ActionType::Update,
         "MetalLB configuration",
         async {
-            resources::ensure_metallb_config(client, node).await?;
-            resources::ensure_load_balancer_service(client, node).await?;
+            // TODO: Load balancer and global discovery fields not yet implemented in StellarNodeSpec
+            // resources::ensure_metallb_config(client, node).await?;
+            // resources::ensure_load_balancer_service(client, node).await?;
             Ok(())
         },
     )
