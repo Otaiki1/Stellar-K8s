@@ -209,7 +209,6 @@ async fn emit_spec_validation_event(
     let message = format_spec_validation_errors(errors);
     emit_event(client, node, "Warning", "SpecValidationFailed", &message).await
 }
-
 /// Action types for apply_or_emit helper
 #[derive(Debug, Clone, Copy)]
 pub enum ActionType {
@@ -245,7 +244,7 @@ where
             ActionType::Update => "WouldUpdate",
             ActionType::Delete => "WouldDelete",
         };
-        let message = format!("Dry Run: Would {} {}", action, resource_info);
+        let message = format!("Dry Run: Would {action} {resource_info}");
         info!("{}", message);
         emit_event(&ctx.client, node, "Normal", reason, &message).await?;
         Ok(())
@@ -409,8 +408,7 @@ async fn apply_stellar_node(
                         "Normal",
                         "DatabaseMigrationRequired",
                         &format!(
-                            "Database migration will be performed via InitContainer for version {}",
-                            current_version
+                            "Database migration will be performed via InitContainer for version {current_version}"
                         ),
                     )
                     .await?;
@@ -546,7 +544,7 @@ async fn apply_stellar_node(
                             node,
                             "Warning",
                             "VSLFetchFailed",
-                            &format!("Failed to fetch VSL from {}: {}", vl_source, e),
+                            &format!("Failed to fetch VSL from {vl_source}: {e}"),
                         )
                         .await?;
                     }
@@ -738,7 +736,7 @@ async fn apply_stellar_node(
             let pod_api: Api<k8s_openapi::api::core::v1::Pod> =
                 Api::namespaced(client.clone(), &namespace);
             let lp = kube::api::ListParams::default()
-                .labels(&format!("app.kubernetes.io/instance={}", name));
+                .labels(&format!("app.kubernetes.io/instance={name}"));
             if let Ok(pods) = pod_api.list(&lp).await {
                 if let Some(pod) = pods.items.first() {
                     if let Some(status) = &pod.status {
@@ -979,6 +977,31 @@ async fn cleanup_stellar_node(
     })
     .await?;
 
+    // 3b. Delete MetalLB LoadBalancer Service
+    apply_or_emit(
+        ctx,
+        node,
+        ActionType::Delete,
+        "MetalLB LoadBalancer",
+        async {
+            if let Err(e) = resources::delete_load_balancer_service(client, node).await {
+                warn!("Failed to delete MetalLB LoadBalancer service: {:?}", e);
+            }
+            if let Err(e) = resources::delete_metallb_config(client, node).await {
+                warn!("Failed to delete MetalLB configuration: {:?}", e);
+            }
+            Ok(())
+        },
+    )
+    .await?;
+    // 3c. Delete PDB
+    apply_or_emit(ctx, node, ActionType::Delete, "PDB", async {
+        if let Err(e) = resources::delete_pdb(client, node).await {
+            warn!("Failed to delete PodDisruptionBudget: {:?}", e);
+        }
+        Ok(())
+    })
+    .await?;
     // 4. Delete Service
     apply_or_emit(ctx, node, ActionType::Delete, "Service", async {
         if let Err(e) = resources::delete_service(client, node).await {
@@ -1663,7 +1686,6 @@ async fn get_latest_network_ledger(network: &crate::crd::StellarNetwork) -> Resu
     })?;
     Ok(ledger)
 }
-
 /// Update the status with DR results
 async fn update_dr_status(
     client: &Client,

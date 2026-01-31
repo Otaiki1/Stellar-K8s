@@ -42,6 +42,9 @@ mod stellar_node_spec_validation {
             managed_database: None,
             autoscaling: None,
             ingress: None,
+            load_balancer: None,
+            global_discovery: None,
+            cross_cluster: None,
             strategy: Default::default(),
             maintenance_mode: false,
             network_policy: None,
@@ -51,6 +54,11 @@ mod stellar_node_spec_validation {
             cross_cluster: None,
             cve_handling: None,
             resource_meta: None,
+            // New fields
+            load_balancer: None,
+            global_discovery: None,
+            cross_cluster: None,
+            cluster: None,
         }
     }
 
@@ -82,6 +90,9 @@ mod stellar_node_spec_validation {
             managed_database: None,
             autoscaling: None,
             ingress: None,
+            load_balancer: None,
+            global_discovery: None,
+            cross_cluster: None,
             strategy: Default::default(),
             maintenance_mode: false,
             network_policy: None,
@@ -91,6 +102,11 @@ mod stellar_node_spec_validation {
             cross_cluster: None,
             cve_handling: None,
             resource_meta: None,
+            // New fields
+            load_balancer: None,
+            global_discovery: None,
+            cross_cluster: None,
+            cluster: None,
         }
     }
 
@@ -122,6 +138,9 @@ mod stellar_node_spec_validation {
             managed_database: None,
             autoscaling: None,
             ingress: None,
+            load_balancer: None,
+            global_discovery: None,
+            cross_cluster: None,
             strategy: Default::default(),
             maintenance_mode: false,
             network_policy: None,
@@ -131,6 +150,11 @@ mod stellar_node_spec_validation {
             cross_cluster: None,
             cve_handling: None,
             resource_meta: None,
+            // New fields
+            load_balancer: None,
+            global_discovery: None,
+            cross_cluster: None,
+            cluster: None,
         }
     }
 
