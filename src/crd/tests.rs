@@ -50,15 +50,8 @@ mod stellar_node_spec_validation {
             network_policy: None,
             dr_config: None,
             topology_spread_constraints: None,
-            cluster: None,
-            cross_cluster: None,
             cve_handling: None,
             resource_meta: None,
-            // New fields
-            load_balancer: None,
-            global_discovery: None,
-            cross_cluster: None,
-            cluster: None,
         }
     }
 
@@ -98,15 +91,8 @@ mod stellar_node_spec_validation {
             network_policy: None,
             dr_config: None,
             topology_spread_constraints: None,
-            cluster: None,
-            cross_cluster: None,
             cve_handling: None,
             resource_meta: None,
-            // New fields
-            load_balancer: None,
-            global_discovery: None,
-            cross_cluster: None,
-            cluster: None,
         }
     }
 
@@ -146,15 +132,8 @@ mod stellar_node_spec_validation {
             network_policy: None,
             dr_config: None,
             topology_spread_constraints: None,
-            cluster: None,
-            cross_cluster: None,
             cve_handling: None,
             resource_meta: None,
-            // New fields
-            load_balancer: None,
-            global_discovery: None,
-            cross_cluster: None,
-            cluster: None,
         }
     }
 

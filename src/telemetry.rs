@@ -11,7 +11,6 @@ use opentelemetry_sdk::resource::Resource;
 use opentelemetry_sdk::runtime;
 use opentelemetry_sdk::trace::{Config, Sampler, SpanProcessor};
 use std::env;
-use std::sync::Arc;
 use tracing_subscriber::{registry::LookupSpan, Layer};
 
 /// A span processor that scrubs sensitive information from span attributes
@@ -27,7 +26,7 @@ impl ScrubbingProcessor {
         }
     }
 
-    fn scrub_attributes(&self, attributes: &mut Vec<KeyValue>) {
+    fn scrub_attributes(&self, attributes: &mut [KeyValue]) {
         for kv in attributes.iter_mut() {
             let key = kv.key.as_str();
             if key == "net.peer.ip"
@@ -44,20 +43,20 @@ impl ScrubbingProcessor {
 
 impl SpanProcessor for ScrubbingProcessor {
     fn on_start(&self, span: &mut opentelemetry_sdk::trace::Span, cx: &opentelemetry::Context) {
-        if let Ok(mut inner) = self.inner.lock() {
+        if let Ok(inner) = self.inner.lock() {
             inner.on_start(span, cx);
         }
     }
 
     fn on_end(&self, mut span: SpanData) {
         self.scrub_attributes(&mut span.attributes);
-        if let Ok(mut inner) = self.inner.lock() {
+        if let Ok(inner) = self.inner.lock() {
             inner.on_end(span);
         }
     }
 
     fn force_flush(&self) -> TraceResult<()> {
-        if let Ok(mut inner) = self.inner.lock() {
+        if let Ok(inner) = self.inner.lock() {
             inner.force_flush()
         } else {
             Ok(())

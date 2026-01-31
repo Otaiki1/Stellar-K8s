@@ -7,8 +7,6 @@ use prometheus_client::encoding::EncodeLabelSet;
 use prometheus_client::metrics::family::Family;
 use prometheus_client::metrics::gauge::Gauge;
 use prometheus_client::registry::Registry;
-use rand::prelude::*;
-use rand::prelude::*;
 
 const DP_EPSILON: f64 = 1.0; // Privacy budget
 const DP_SENSITIVITY: f64 = 1.0; // Sensitivity of the metric
