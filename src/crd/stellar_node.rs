@@ -278,11 +278,12 @@ impl StellarNodeSpec {
                         "Remove spec.ingress for Validator nodes; expose Validator nodes using peer discovery or other supported mechanisms.",
                     ));
                 }
+                // Canary strategy not supported
                 if matches!(self.strategy, RolloutStrategy::Canary(_)) {
                     errors.push(SpecValidationError::new(
                         "spec.strategy",
-                        "Canary rollout is not supported for Validator nodes",
-                        "Use a non-canary rollout strategy (e.g., RollingUpdate) for Validator nodes.",
+                        "canary rollout strategy is not supported for Validator nodes",
+                        "Use RollingUpdate strategy for Validator nodes; canary is only supported for Horizon and SorobanRpc.",
                     ));
                 }
             }

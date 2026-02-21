@@ -13,6 +13,8 @@ mod cve_reconciler;
 #[cfg(test)]
 mod cve_test;
 pub mod dr;
+#[cfg(test)]
+mod dr_test;
 mod finalizers;
 mod health;
 #[cfg(test)]
@@ -21,6 +23,8 @@ mod health_test;
 pub mod metrics;
 pub mod mtls;
 pub mod peer_discovery;
+#[cfg(test)]
+mod peer_discovery_test;
 mod reconciler;
 mod remediation;
 mod resources;
