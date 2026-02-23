@@ -20,12 +20,14 @@ FROM chef AS builder
 COPY --from=planner /app/recipe.json recipe.json
 RUN cargo chef cook --release --recipe-path recipe.json
 
-# Now copy source and build the application
+# Now copy source and build both binaries in a single step to share
+# the dependency cache layer and avoid redundant recompilation.
 COPY . .
-RUN cargo build --release --bin stellar-operator
+RUN cargo build --release --bin stellar-operator --bin kubectl-stellar
 
-# Strip the binary to reduce size
-RUN strip /app/target/release/stellar-operator
+# Strip both binaries to reduce image size
+RUN strip /app/target/release/stellar-operator \
+    && strip /app/target/release/kubectl-stellar
 
 # ==============================================================================
 # Stage 4: Runtime - Minimal distroless image (~15-20MB total)
@@ -37,8 +39,9 @@ LABEL org.opencontainers.image.source="https://github.com/stellar/stellar-k8s"
 LABEL org.opencontainers.image.description="Stellar-K8s Kubernetes Operator"
 LABEL org.opencontainers.image.licenses="Apache-2.0"
 
-# Copy the stripped binary
+# Copy both stripped binaries
 COPY --from=builder /app/target/release/stellar-operator /stellar-operator
+COPY --from=builder /app/target/release/kubectl-stellar /kubectl-stellar
 
 # Run as non-root user (UID 65532 is the nonroot user in distroless)
 USER nonroot:nonroot
