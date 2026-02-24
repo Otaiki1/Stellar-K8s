@@ -64,7 +64,12 @@ opentelemetry-otlp = { version = "0.14", features = [
 ] }
 
 # HTTP client for health checks
-reqwest = { version = "0.12", features = ["json", "rustls-tls-manual-roots", "native-tls", "multipart"] }
+reqwest = { version = "0.12", features = [
+    "json",
+    "rustls-tls-manual-roots",
+    "native-tls",
+    "multipart",
+] }
 
 # REST API (optional)
 axum = { version = "0.8.8", optional = true }
@@ -124,6 +129,7 @@ axum = ["dep:axum"]
 [dev-dependencies]
 tokio-test = "0.4"
 tempfile = "3"
+wiremock = "0.6"
 
 [[bin]]
 name = "stellar-operator"

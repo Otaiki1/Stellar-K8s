@@ -189,6 +189,8 @@ pub fn calculate_backoff(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[test]
     fn test_backoff_calculation() {
@@ -241,6 +243,245 @@ mod tests {
         let result = ArchiveHealthResult::new(vec![], vec![]);
         assert!(!result.all_healthy);
         assert!(!result.any_healthy);
+        assert_eq!(result.summary(), "No archives configured");
+    }
+
+    /// Test that a reachable archive with valid metadata returns healthy status
+    #[tokio::test]
+    async fn test_reachable_archive_healthy() {
+        let mock_server = MockServer::start().await;
+
+        // Mock successful response to stellar-history.json
+        Mock::given(method("HEAD"))
+            .and(path("/.well-known/stellar-history.json"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&mock_server)
+            .await;
+
+        let urls = vec![mock_server.uri()];
+        let result = check_history_archive_health(&urls, Some(Duration::from_secs(5)))
+            .await
+            .unwrap();
+
+        assert!(result.all_healthy);
+        assert!(result.any_healthy);
+        assert_eq!(result.healthy_urls.len(), 1);
+        assert_eq!(result.unhealthy_urls.len(), 0);
+        assert_eq!(result.healthy_urls[0], mock_server.uri());
+    }
+
+    /// Test that an unreachable archive is marked as unhealthy
+    #[tokio::test]
+    async fn test_unreachable_archive_unhealthy() {
+        // Use an invalid URL that will fail to connect
+        let urls = vec!["http://localhost:1".to_string()];
+        let result = check_history_archive_health(&urls, Some(Duration::from_millis(100)))
+            .await
+            .unwrap();
+
+        assert!(!result.all_healthy);
+        assert!(!result.any_healthy);
+        assert_eq!(result.healthy_urls.len(), 0);
+        assert_eq!(result.unhealthy_urls.len(), 1);
+        assert_eq!(result.unhealthy_urls[0].0, "http://localhost:1");
+        // Error message should contain connection-related info
+        assert!(result.unhealthy_urls[0].1.contains("HTTP"));
+    }
+
+    /// Test that an archive with missing metadata but working root is flagged as degraded
+    #[tokio::test]
+    async fn test_archive_degraded_stale_metadata() {
+        let mock_server = MockServer::start().await;
+
+        // Mock 404 for stellar-history.json (stale/missing metadata)
+        Mock::given(method("HEAD"))
+            .and(path("/.well-known/stellar-history.json"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&mock_server)
+            .await;
+
+        // Mock successful response to root endpoint (archive is still reachable)
+        Mock::given(method("HEAD"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&mock_server)
+            .await;
+
+        let urls = vec![mock_server.uri()];
+        let result = check_history_archive_health(&urls, Some(Duration::from_secs(5)))
+            .await
+            .unwrap();
+
+        // Archive is considered healthy (reachable via root), though metadata is missing
+        assert!(result.all_healthy);
+        assert!(result.any_healthy);
+        assert_eq!(result.healthy_urls.len(), 1);
+        assert_eq!(result.unhealthy_urls.len(), 0);
+    }
+
+    /// Test that completely unreachable archive (both endpoints fail) is marked unhealthy
+    #[tokio::test]
+    async fn test_archive_both_endpoints_fail() {
+        let mock_server = MockServer::start().await;
+
+        // Mock 500 for stellar-history.json
+        Mock::given(method("HEAD"))
+            .and(path("/.well-known/stellar-history.json"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&mock_server)
+            .await;
+
+        // Mock 500 for root endpoint
+        Mock::given(method("HEAD"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&mock_server)
+            .await;
+
+        let urls = vec![mock_server.uri()];
+        let result = check_history_archive_health(&urls, Some(Duration::from_secs(5)))
+            .await
+            .unwrap();
+
+        assert!(!result.all_healthy);
+        assert!(!result.any_healthy);
+        assert_eq!(result.healthy_urls.len(), 0);
+        assert_eq!(result.unhealthy_urls.len(), 1);
+        assert!(result.unhealthy_urls[0].1.contains("HTTP 500"));
+    }
+
+    /// Test that the check respects configurable timeout
+    #[tokio::test]
+    async fn test_timeout_respected() {
+        let mock_server = MockServer::start().await;
+
+        // Mock a delayed response (2 seconds)
+        Mock::given(method("HEAD"))
+            .and(path("/.well-known/stellar-history.json"))
+            .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(2)))
+            .mount(&mock_server)
+            .await;
+
+        let urls = vec![mock_server.uri()];
+
+        // Test with short timeout (100ms) - should fail
+        let result = check_history_archive_health(&urls, Some(Duration::from_millis(100)))
+            .await
+            .unwrap();
+
+        assert!(!result.all_healthy);
+        assert_eq!(result.unhealthy_urls.len(), 1);
+        // Error should indicate timeout or connection issue
+        assert!(
+            result.unhealthy_urls[0].1.contains("HTTP")
+                || result.unhealthy_urls[0].1.contains("timeout")
+                || result.unhealthy_urls[0].1.contains("Connection")
+        );
+    }
+
+    /// Test that the check works with long enough timeout
+    #[tokio::test]
+    async fn test_timeout_sufficient() {
+        let mock_server = MockServer::start().await;
+
+        // Mock a slightly delayed response (100ms)
+        Mock::given(method("HEAD"))
+            .and(path("/.well-known/stellar-history.json"))
+            .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_millis(100)))
+            .mount(&mock_server)
+            .await;
+
+        let urls = vec![mock_server.uri()];
+
+        // Test with sufficient timeout (5 seconds) - should succeed
+        let result = check_history_archive_health(&urls, Some(Duration::from_secs(5)))
+            .await
+            .unwrap();
+
+        assert!(result.all_healthy);
+        assert_eq!(result.healthy_urls.len(), 1);
+        assert_eq!(result.unhealthy_urls.len(), 0);
+    }
+
+    /// Test multiple archives with mixed health status
+    #[tokio::test]
+    async fn test_multiple_archives_mixed_health() {
+        let mock_server1 = MockServer::start().await;
+        let mock_server2 = MockServer::start().await;
+
+        // First archive: healthy
+        Mock::given(method("HEAD"))
+            .and(path("/.well-known/stellar-history.json"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&mock_server1)
+            .await;
+
+        // Second archive: unhealthy (500 error)
+        Mock::given(method("HEAD"))
+            .and(path("/.well-known/stellar-history.json"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&mock_server2)
+            .await;
+
+        Mock::given(method("HEAD"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&mock_server2)
+            .await;
+
+        let urls = vec![mock_server1.uri(), mock_server2.uri()];
+        let result = check_history_archive_health(&urls, Some(Duration::from_secs(5)))
+            .await
+            .unwrap();
+
+        assert!(!result.all_healthy);
+        assert!(result.any_healthy);
+        assert_eq!(result.healthy_urls.len(), 1);
+        assert_eq!(result.unhealthy_urls.len(), 1);
+        assert_eq!(result.summary(), "1 healthy, 1 unhealthy archive(s)");
+    }
+
+    /// Test error_details formatting for unhealthy archives
+    #[tokio::test]
+    async fn test_error_details_formatting() {
+        let mock_server = MockServer::start().await;
+
+        // Mock unhealthy archive
+        Mock::given(method("HEAD"))
+            .and(path("/.well-known/stellar-history.json"))
+            .respond_with(ResponseTemplate::new(503))
+            .mount(&mock_server)
+            .await;
+
+        Mock::given(method("HEAD"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(503))
+            .mount(&mock_server)
+            .await;
+
+        let urls = vec![mock_server.uri()];
+        let result = check_history_archive_health(&urls, Some(Duration::from_secs(5)))
+            .await
+            .unwrap();
+
+        let error_details = result.error_details();
+        assert!(!error_details.is_empty());
+        assert!(error_details.contains(&mock_server.uri()));
+        assert!(error_details.contains("HTTP 503"));
+    }
+
+    /// Test empty URL list handling
+    #[tokio::test]
+    async fn test_empty_url_list() {
+        let urls: Vec<String> = vec![];
+        let result = check_history_archive_health(&urls, Some(Duration::from_secs(5)))
+            .await
+            .unwrap();
+
+        assert!(!result.all_healthy);
+        assert!(!result.any_healthy);
+        assert_eq!(result.healthy_urls.len(), 0);
+        assert_eq!(result.unhealthy_urls.len(), 0);
         assert_eq!(result.summary(), "No archives configured");
     }
 }
