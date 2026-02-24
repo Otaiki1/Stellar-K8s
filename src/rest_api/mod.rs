@@ -7,4 +7,4 @@ mod dto;
 mod handlers;
 mod server;
 
-pub use server::run_server;
+pub use server::{build_tls_server_config, run_server};

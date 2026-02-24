@@ -3711,6 +3711,7 @@ dependencies = [
  "wasmtime",
  "wasmtime-wasi",
  "wiremock",
+ "x509-parser",
 ]
 
 [[package]]

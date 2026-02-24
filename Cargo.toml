@@ -86,6 +86,7 @@ rcgen = { version = "0.13", features = ["pem", "x509-parser"] }
 axum-server = { version = "0.7.0", features = ["tls-rustls"] }
 rustls-pemfile = "2.2.0"
 rustls-pki-types = "1.14.0"
+x509-parser = "0.16"
 
 # Wasm runtime for custom validation plugins
 wasmtime = { version = "24.0.5", optional = true }
