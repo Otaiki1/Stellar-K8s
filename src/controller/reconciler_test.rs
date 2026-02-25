@@ -253,6 +253,7 @@ VALIDATORS=["VALIDATOR1", "VALIDATOR2"]"#
     }
 
     /// Helper function to create a dummy client for tests without kubeconfig
+    #[allow(dead_code)]
     fn create_dummy_client() -> Client {
         // For tests that don't actually call Kubernetes APIs, we skip client creation
         // In a real test environment, you would use a mock server or test cluster
