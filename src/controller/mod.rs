@@ -33,6 +33,8 @@ mod remediation;
 #[cfg(test)]
 mod remediation_test;
 mod resources;
+#[cfg(test)]
+mod resources_test;
 pub mod traffic;
 #[cfg(test)]
 mod traffic_test;

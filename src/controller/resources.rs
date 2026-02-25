@@ -1599,7 +1599,10 @@ fn build_pod_template(
                 ..Default::default()
             },
         ]),
-        topology_spread_constraints: node.spec.topology_spread_constraints.clone(),
+        topology_spread_constraints: Some(build_topology_spread_constraints(
+            &node.spec,
+            &node.name_any(),
+        )),
         ..Default::default()
     };
 
@@ -1732,6 +1735,67 @@ fn build_pod_template(
         )),
         spec: Some(pod_spec),
     }
+}
+
+/// Build `TopologySpreadConstraints` for a pod spec.
+///
+/// If the user has provided constraints in `spec.topologySpreadConstraints`
+/// those are used as-is. If the field is `None` **or** an empty vec, two
+/// sensible defaults are generated:
+///
+/// 1. Spread across nodes  (`kubernetes.io/hostname`,      maxSkew=1, DoNotSchedule)
+/// 2. Spread across zones  (`topology.kubernetes.io/zone`, maxSkew=1, DoNotSchedule)
+///
+/// Both defaults target pods that share the same `app.kubernetes.io/instance`
+/// label so only pods of *this* StellarNode are counted when computing skew.
+pub fn build_topology_spread_constraints(
+    spec: &crate::crd::StellarNodeSpec,
+    node_name: &str,
+) -> Vec<k8s_openapi::api::core::v1::TopologySpreadConstraint> {
+    use k8s_openapi::api::core::v1::TopologySpreadConstraint;
+    use k8s_openapi::apimachinery::pkg::apis::meta::v1::LabelSelector;
+    use std::collections::BTreeMap;
+
+    // Use user-provided constraints if present and non-empty
+    if let Some(constraints) = &spec.topology_spread_constraints {
+        if !constraints.is_empty() {
+            return constraints.clone();
+        }
+    }
+
+    // Default label selector: target pods belonging to this specific node instance
+    let selector = LabelSelector {
+        match_labels: Some(BTreeMap::from([
+            (
+                "app.kubernetes.io/name".to_string(),
+                "stellar-node".to_string(),
+            ),
+            (
+                "app.kubernetes.io/instance".to_string(),
+                node_name.to_string(),
+            ),
+        ])),
+        ..Default::default()
+    };
+
+    vec![
+        // Spread across physical/virtual nodes (avoids co-location on same host)
+        TopologySpreadConstraint {
+            max_skew: 1,
+            topology_key: "kubernetes.io/hostname".to_string(),
+            when_unsatisfiable: "DoNotSchedule".to_string(),
+            label_selector: Some(selector.clone()),
+            ..Default::default()
+        },
+        // Spread across availability zones (avoids single-AZ failure)
+        TopologySpreadConstraint {
+            max_skew: 1,
+            topology_key: "topology.kubernetes.io/zone".to_string(),
+            when_unsatisfiable: "DoNotSchedule".to_string(),
+            label_selector: Some(selector),
+            ..Default::default()
+        },
+    ]
 }
 
 fn build_container(node: &StellarNode, enable_mtls: bool) -> Container {
