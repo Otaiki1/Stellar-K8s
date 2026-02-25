@@ -56,6 +56,7 @@ mod stellar_node_spec_validation {
             service_mesh: None,
             resource_meta: None,
             vpa_config: None,
+            read_pool_endpoint: None,
         }
     }
 
@@ -101,6 +102,7 @@ mod stellar_node_spec_validation {
             service_mesh: None,
             resource_meta: None,
             vpa_config: None,
+            read_pool_endpoint: None,
         }
     }
 
@@ -146,6 +148,7 @@ mod stellar_node_spec_validation {
             service_mesh: None,
             resource_meta: None,
             vpa_config: None,
+            read_pool_endpoint: None,
         }
     }
 

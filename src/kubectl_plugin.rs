@@ -544,6 +544,7 @@ mod tests {
                 oci_snapshot: None,
             service_mesh: None,
                 resource_meta: None,
+                read_pool_endpoint: None,
             },
             status: Some(StellarNodeStatus {
                 #[allow(deprecated)]

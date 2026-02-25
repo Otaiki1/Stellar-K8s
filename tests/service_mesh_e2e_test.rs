@@ -84,6 +84,7 @@ mod tests {
                     }),
                     linkerd: None,
                 }),
+                read_pool_endpoint: None,
                 resource_meta: None,
             },
             status: None,
