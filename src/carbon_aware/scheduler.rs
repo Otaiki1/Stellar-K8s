@@ -24,11 +24,7 @@ pub struct CarbonAwareScheduler {
 
 impl CarbonAwareScheduler {
     /// Create new carbon-aware scheduler
-    pub fn new(
-        api: CarbonIntensityAPI,
-        config: CarbonAwareConfig,
-        kube_client: Client,
-    ) -> Self {
+    pub fn new(api: CarbonIntensityAPI, config: CarbonAwareConfig, kube_client: Client) -> Self {
         Self {
             api,
             config,
@@ -50,12 +46,12 @@ impl CarbonAwareScheduler {
 
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(
-                tokio::time::Duration::from_secs(60) // Refresh every minute
+                tokio::time::Duration::from_secs(60), // Refresh every minute
             );
 
             loop {
                 interval.tick().await;
-                
+
                 match api.fetch_all_regions().await {
                     Ok(data) => {
                         let mut guard = carbon_data.write().await;
@@ -85,7 +81,7 @@ impl CarbonAwareScheduler {
         }
 
         let carbon_data = self.carbon_data.read().await;
-        
+
         // Check if data is stale
         if carbon_data.is_stale(self.config.max_data_age_minutes) {
             warn!("Carbon intensity data is stale, using fallback scoring");
@@ -109,14 +105,15 @@ impl CarbonAwareScheduler {
     async fn calculate_carbon_score(&self, node: &Node, carbon_data: &RegionCarbonData) -> f64 {
         // Extract region from node labels
         let region = self.extract_node_region(node);
-        
+
         if let Some(region) = region {
             if let Some(carbon_info) = carbon_data.get_region(&region) {
                 // Convert carbon intensity to score (lower intensity = higher score)
                 // Normalize to 0-1 range where 1 is best (lowest carbon)
                 let max_intensity = 1000.0; // gCO2/kWh - reasonable upper bound
-                let normalized_score = 1.0 - (carbon_info.carbon_intensity / max_intensity).min(1.0);
-                
+                let normalized_score =
+                    1.0 - (carbon_info.carbon_intensity / max_intensity).min(1.0);
+
                 debug!(
                     "Node {} in region {} has carbon intensity {} gCO2/kWh, score: {}",
                     node.name_any(),
@@ -124,7 +121,7 @@ impl CarbonAwareScheduler {
                     carbon_info.carbon_intensity,
                     normalized_score
                 );
-                
+
                 return normalized_score;
             }
         }
@@ -158,7 +155,7 @@ impl CarbonAwareScheduler {
 
         // Try to extract from node name or provider-specific metadata
         let node_name = node.name_any();
-        
+
         // AWS: parse from names like "ip-10-0-1-123.us-west-2.compute.internal"
         if node_name.contains("compute.amazonaws.com") || node_name.contains("ec2.internal") {
             if let Some(region) = self.extract_aws_region(&node_name) {
@@ -190,10 +187,21 @@ impl CarbonAwareScheduler {
     fn extract_aws_region(&self, node_name: &str) -> Option<String> {
         // AWS regions in node names like "us-west-2"
         let aws_regions = [
-            "us-east-1", "us-east-2", "us-west-1", "us-west-2",
-            "ca-central-1", "eu-west-1", "eu-west-2", "eu-central-1",
-            "eu-north-1", "ap-southeast-1", "ap-southeast-2", "ap-northeast-1",
-            "ap-northeast-2", "ap-south-1", "sa-east-1",
+            "us-east-1",
+            "us-east-2",
+            "us-west-1",
+            "us-west-2",
+            "ca-central-1",
+            "eu-west-1",
+            "eu-west-2",
+            "eu-central-1",
+            "eu-north-1",
+            "ap-southeast-1",
+            "ap-southeast-2",
+            "ap-northeast-1",
+            "ap-northeast-2",
+            "ap-south-1",
+            "sa-east-1",
         ];
 
         for region in &aws_regions {
@@ -208,9 +216,18 @@ impl CarbonAwareScheduler {
     fn extract_gcp_region(&self, node_name: &str) -> Option<String> {
         // GCP regions like "us-west1", "europe-west1"
         let gcp_regions = [
-            "us-central1", "us-east1", "us-west1", "us-west2",
-            "europe-west1", "europe-west2", "europe-west3", "europe-west4",
-            "asia-east1", "asia-southeast1", "asia-northeast1", "asia-northeast2",
+            "us-central1",
+            "us-east1",
+            "us-west1",
+            "us-west2",
+            "europe-west1",
+            "europe-west2",
+            "europe-west3",
+            "europe-west4",
+            "asia-east1",
+            "asia-southeast1",
+            "asia-northeast1",
+            "asia-northeast2",
         ];
 
         for region in &gcp_regions {
@@ -241,8 +258,15 @@ impl CarbonAwareScheduler {
     /// Parse Azure region from resource group name
     fn parse_azure_region_from_rg(&self, resource_group: &str) -> Option<String> {
         let azure_regions = [
-            "eastus", "eastus2", "westus", "westus2", "centralus",
-            "northeurope", "westeurope", "southeastasia", "eastasia",
+            "eastus",
+            "eastus2",
+            "westus",
+            "westus2",
+            "centralus",
+            "northeurope",
+            "westeurope",
+            "southeastasia",
+            "eastasia",
         ];
 
         for region in &azure_regions {
@@ -279,17 +303,22 @@ impl CarbonAwareScheduler {
     /// Get current carbon statistics
     pub async fn get_carbon_stats(&self) -> Result<CarbonStats> {
         let carbon_data = self.carbon_data.read().await;
-        
+
         let regions_count = carbon_data.regions.len();
         let avg_intensity = if regions_count > 0 {
-            carbon_data.regions.values()
+            carbon_data
+                .regions
+                .values()
                 .map(|d| d.carbon_intensity)
-                .sum::<f64>() / regions_count as f64
+                .sum::<f64>()
+                / regions_count as f64
         } else {
             0.0
         };
 
-        let best_region = carbon_data.regions.values()
+        let best_region = carbon_data
+            .regions
+            .values()
             .min_by(|a, b| a.carbon_intensity.partial_cmp(&b.carbon_intensity).unwrap())
             .map(|d| d.region.clone());
 

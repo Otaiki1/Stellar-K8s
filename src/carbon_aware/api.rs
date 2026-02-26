@@ -44,17 +44,21 @@ impl CarbonIntensityAPI {
     }
 
     /// Fetch data from ElectricityMap API
-    async fn fetch_electricitymap_data(&self, base_url: &str, token: &str) -> Result<RegionCarbonData> {
+    async fn fetch_electricitymap_data(
+        &self,
+        base_url: &str,
+        token: &str,
+    ) -> Result<RegionCarbonData> {
         let url = format!("{}/v3/carbon-intensity/latest", base_url);
-        
+
         let mut request = self.client.get(&url);
-        
+
         if !token.is_empty() {
             request = request.header("auth-token", token);
         }
 
         let response = request.send().await?;
-        
+
         if !response.status().is_success() {
             return Err(crate::error::Error::NetworkError(format!(
                 "ElectricityMap API error: {}",
@@ -82,9 +86,8 @@ impl CarbonIntensityAPI {
                     };
 
                     // Extract renewable percentage if available
-                    let renewable_percentage = item
-                        .get("renewablePercentage")
-                        .and_then(|rp| rp.as_f64());
+                    let renewable_percentage =
+                        item.get("renewablePercentage").and_then(|rp| rp.as_f64());
 
                     let carbon_data = CarbonIntensityData {
                         region: region.to_string(),
@@ -109,15 +112,19 @@ impl CarbonIntensityAPI {
     }
 
     /// Fetch data from custom API
-    async fn fetch_custom_data(&self, url: &str, auth_header: &Option<String>) -> Result<RegionCarbonData> {
+    async fn fetch_custom_data(
+        &self,
+        url: &str,
+        auth_header: &Option<String>,
+    ) -> Result<RegionCarbonData> {
         let mut request = self.client.get(url);
-        
+
         if let Some(auth) = auth_header {
             request = request.header("Authorization", auth);
         }
 
         let response = request.send().await?;
-        
+
         if !response.status().is_success() {
             return Err(crate::error::Error::NetworkError(format!(
                 "Custom API error: {}",
@@ -149,7 +156,7 @@ impl CarbonIntensityAPI {
     fn parse_custom_region_data(&self, item: &Value) -> Option<CarbonIntensityData> {
         let region = item.get("region").and_then(|r| r.as_str())?;
         let intensity = item.get("carbonIntensity").and_then(|ci| ci.as_f64())?;
-        
+
         let timestamp = item
             .get("timestamp")
             .and_then(|ts| ts.as_str())
@@ -157,9 +164,7 @@ impl CarbonIntensityAPI {
             .map(|dt| dt.with_timezone(&Utc))
             .unwrap_or_else(Utc::now);
 
-        let renewable_percentage = item
-            .get("renewablePercentage")
-            .and_then(|rp| rp.as_f64());
+        let renewable_percentage = item.get("renewablePercentage").and_then(|rp| rp.as_f64());
 
         Some(CarbonIntensityData {
             region: region.to_string(),
@@ -178,13 +183,13 @@ impl CarbonIntensityAPI {
 
         // Mock data for various regions with realistic carbon intensity values
         let mock_regions = vec![
-            ("US-CA", 150.0, Some(45.0)), // California - moderate
-            ("US-WA", 80.0, Some(65.0)),  // Washington - low (hydro)
-            ("DE", 300.0, Some(25.0)),    // Germany - high
-            ("FR", 60.0, Some(70.0)),     // France - very low (nuclear)
-            ("GB", 200.0, Some(35.0)),    // Great Britain - moderate
-            ("NO", 30.0, Some(95.0)),     // Norway - very low (hydro)
-            ("SE", 50.0, Some(80.0)),     // Sweden - very low (hydro/nuclear)
+            ("US-CA", 150.0, Some(45.0)),  // California - moderate
+            ("US-WA", 80.0, Some(65.0)),   // Washington - low (hydro)
+            ("DE", 300.0, Some(25.0)),     // Germany - high
+            ("FR", 60.0, Some(70.0)),      // France - very low (nuclear)
+            ("GB", 200.0, Some(35.0)),     // Great Britain - moderate
+            ("NO", 30.0, Some(95.0)),      // Norway - very low (hydro)
+            ("SE", 50.0, Some(80.0)),      // Sweden - very low (hydro/nuclear)
             ("AU-NSW", 600.0, Some(15.0)), // Australia NSW - high (coal)
         ];
 
@@ -200,7 +205,10 @@ impl CarbonIntensityAPI {
             region_data.update_region(carbon_data);
         }
 
-        info!("Generated mock carbon intensity data for {} regions", region_data.regions.len());
+        info!(
+            "Generated mock carbon intensity data for {} regions",
+            region_data.regions.len()
+        );
         Ok(region_data)
     }
 

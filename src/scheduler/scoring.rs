@@ -49,10 +49,10 @@ async fn score_nodes_carbon_aware<'a>(
     // Mock carbon intensity data by region
     // In real implementation, this would come from the carbon intensity API
     let mock_carbon_intensity = HashMap::from([
-        ("us-west-2", 150.0),  // Washington/Oregon - hydro heavy
-        ("us-east-1", 400.0),  // Virginia - mixed
-        ("eu-west-1", 300.0),  // Ireland - mixed
-        ("eu-central-1", 450.0), // Frankfurt - coal heavy
+        ("us-west-2", 150.0),      // Washington/Oregon - hydro heavy
+        ("us-east-1", 400.0),      // Virginia - mixed
+        ("eu-west-1", 300.0),      // Ireland - mixed
+        ("eu-central-1", 450.0),   // Frankfurt - coal heavy
         ("ap-southeast-1", 600.0), // Singapore - gas heavy
     ]);
 
@@ -61,7 +61,7 @@ async fn score_nodes_carbon_aware<'a>(
 
     for node in candidates {
         let region = extract_region_from_node(node);
-        
+
         if let Some(r) = region {
             if let Some(&intensity) = mock_carbon_intensity.get(&r.as_str()) {
                 if intensity < best_intensity {
@@ -184,12 +184,21 @@ fn extract_region_from_node(node: &Node) -> Option<String> {
 
     // Try to extract from node name for cloud providers
     let node_name = node.name_any();
-    
+
     // AWS regions
     let aws_regions = [
-        "us-east-1", "us-east-2", "us-west-1", "us-west-2",
-        "ca-central-1", "eu-west-1", "eu-west-2", "eu-central-1",
-        "eu-north-1", "ap-southeast-1", "ap-southeast-2", "ap-northeast-1",
+        "us-east-1",
+        "us-east-2",
+        "us-west-1",
+        "us-west-2",
+        "ca-central-1",
+        "eu-west-1",
+        "eu-west-2",
+        "eu-central-1",
+        "eu-north-1",
+        "ap-southeast-1",
+        "ap-southeast-2",
+        "ap-northeast-1",
     ];
 
     for region in &aws_regions {

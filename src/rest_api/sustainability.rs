@@ -3,7 +3,7 @@
 //! Provides REST API endpoints for monitoring CO2 footprint and carbon intensity
 //! of managed Stellar infrastructure.
 
-use crate::carbon_aware::{CarbonIntensityAPI, CarbonAwareScheduler};
+use crate::carbon_aware::{CarbonAwareScheduler, CarbonIntensityAPI};
 use crate::error::Result;
 use axum::{
     extract::State,
@@ -141,20 +141,25 @@ pub async fn get_sustainability_metrics(
     info!("Fetching sustainability metrics");
 
     // Get carbon statistics from scheduler
-    let carbon_stats: crate::carbon_aware::scheduler::CarbonStats = state.carbon_scheduler.get_carbon_stats().await
+    let carbon_stats: crate::carbon_aware::scheduler::CarbonStats = state
+        .carbon_scheduler
+        .get_carbon_stats()
+        .await
         .map_err(|e| {
             debug!("Failed to get carbon stats: {}", e);
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
 
     // Get detailed region data
-    let carbon_data: crate::carbon_aware::types::RegionCarbonData = state.carbon_api.fetch_all_regions().await
-        .map_err(|e| {
+    let carbon_data: crate::carbon_aware::types::RegionCarbonData =
+        state.carbon_api.fetch_all_regions().await.map_err(|e| {
             debug!("Failed to fetch carbon data: {}", e);
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
 
-    let mut regions: Vec<RegionInfo> = carbon_data.regions.values()
+    let mut regions: Vec<RegionInfo> = carbon_data
+        .regions
+        .values()
         .map(|data| RegionInfo {
             region: data.region.clone(),
             carbon_intensity: data.carbon_intensity,
@@ -176,7 +181,9 @@ pub async fn get_sustainability_metrics(
 
     // Calculate data status
     let now = Utc::now();
-    let age_minutes = now.signed_duration_since(carbon_data.last_updated).num_minutes();
+    let age_minutes = now
+        .signed_duration_since(carbon_data.last_updated)
+        .num_minutes();
     let data_status = DataStatus {
         last_updated: carbon_data.last_updated,
         is_stale: age_minutes > 15, // Consider stale after 15 minutes
@@ -204,10 +211,15 @@ pub async fn get_sustainability_metrics(
 pub async fn get_region_data(
     State(state): State<SustainabilityState>,
 ) -> Result<Json<Vec<RegionInfo>>, StatusCode> {
-    let carbon_data: crate::carbon_aware::types::RegionCarbonData = state.carbon_api.fetch_all_regions().await
+    let carbon_data: crate::carbon_aware::types::RegionCarbonData = state
+        .carbon_api
+        .fetch_all_regions()
+        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let regions: Vec<RegionInfo> = carbon_data.regions.values()
+    let regions: Vec<RegionInfo> = carbon_data
+        .regions
+        .values()
         .map(|data| RegionInfo {
             region: data.region.clone(),
             carbon_intensity: data.carbon_intensity,
@@ -226,7 +238,10 @@ pub async fn get_region_details(
     State(state): State<SustainabilityState>,
     axum::extract::Path(region): axum::extract::Path<String>,
 ) -> Result<Json<RegionInfo>, StatusCode> {
-    let carbon_data: Option<crate::carbon_aware::types::CarbonIntensityData> = state.carbon_api.fetch_region(&region).await
+    let carbon_data: Option<crate::carbon_aware::types::CarbonIntensityData> = state
+        .carbon_api
+        .fetch_region(&region)
+        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     match carbon_data {
@@ -274,7 +289,10 @@ pub async fn get_node_footprints(
 pub async fn get_carbon_api_health(
     State(state): State<SustainabilityState>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let is_healthy: bool = state.carbon_api.health_check().await
+    let is_healthy: bool = state
+        .carbon_api
+        .health_check()
+        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let health = serde_json::json!({
@@ -302,32 +320,32 @@ async fn generate_mock_node_footprints(regions: &[RegionInfo]) -> Vec<NodeFootpr
         .map(|r| (r.region.clone(), r.carbon_intensity))
         .collect();
 
-    mock_nodes.into_iter().map(|(name, node_type, region, power_watts)| {
-        let carbon_intensity = region_intensity_map
-            .get(region)
-            .copied()
-            .unwrap_or(400.0); // Default if not found
+    mock_nodes
+        .into_iter()
+        .map(|(name, node_type, region, power_watts)| {
+            let carbon_intensity = region_intensity_map.get(region).copied().unwrap_or(400.0); // Default if not found
 
-        let hourly_emissions = (power_watts / 1000.0) * carbon_intensity; // kWh * gCO2/kWh
-        let daily_emissions = hourly_emissions * 24.0;
+            let hourly_emissions = (power_watts / 1000.0) * carbon_intensity; // kWh * gCO2/kWh
+            let daily_emissions = hourly_emissions * 24.0;
 
-        NodeFootprint {
-            node_name: name.to_string(),
-            node_type: node_type.to_string(),
-            region: region.to_string(),
-            carbon_intensity,
-            hourly_emissions,
-            daily_emissions,
-            power_consumption: power_watts,
-        }
-    }).collect()
+            NodeFootprint {
+                node_name: name.to_string(),
+                node_type: node_type.to_string(),
+                region: region.to_string(),
+                carbon_intensity,
+                hourly_emissions,
+                daily_emissions,
+                power_consumption: power_watts,
+            }
+        })
+        .collect()
 }
 
 /// Generate mock forecast data
 fn generate_mock_forecast(region: &str) -> Vec<ForecastPoint> {
     let mut forecast = Vec::new();
     let now = Utc::now();
-    
+
     // Generate 24-hour forecast with some variation
     let base_intensity = match region {
         "us-west-2" => 150.0,
@@ -344,9 +362,9 @@ fn generate_mock_forecast(region: &str) -> Vec<ForecastPoint> {
         let variation = if (hour % 24) >= 8 && (hour % 24) <= 18 {
             -20.0 // Daytime - more solar
         } else {
-            30.0  // Nighttime - less solar
+            30.0 // Nighttime - less solar
         };
-        
+
         let carbon_intensity = (base_intensity + variation + (hour as f64 * 2.0)).max(50.0);
         let confidence = 0.8 - (hour as f64 * 0.02); // Decreasing confidence over time
 

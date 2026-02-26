@@ -65,9 +65,19 @@ impl RegionCarbonData {
     pub fn get_regions_by_intensity(&self) -> Vec<&String> {
         let mut regions: Vec<&String> = self.regions.keys().collect();
         regions.sort_by(|a, b| {
-            let a_intensity = self.regions.get(*a).map(|d| d.carbon_intensity).unwrap_or(f64::MAX);
-            let b_intensity = self.regions.get(*b).map(|d| d.carbon_intensity).unwrap_or(f64::MAX);
-            a_intensity.partial_cmp(&b_intensity).unwrap_or(std::cmp::Ordering::Equal)
+            let a_intensity = self
+                .regions
+                .get(*a)
+                .map(|d| d.carbon_intensity)
+                .unwrap_or(f64::MAX);
+            let b_intensity = self
+                .regions
+                .get(*b)
+                .map(|d| d.carbon_intensity)
+                .unwrap_or(f64::MAX);
+            a_intensity
+                .partial_cmp(&b_intensity)
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
         regions
     }
