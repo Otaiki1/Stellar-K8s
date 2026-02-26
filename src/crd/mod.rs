@@ -4,8 +4,8 @@
 
 mod cnpg;
 pub mod read_replica;
-mod stellar_node;
 pub mod service_mesh;
+mod stellar_node;
 pub mod types;
 
 #[cfg(test)]

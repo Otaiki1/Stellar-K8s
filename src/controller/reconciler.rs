@@ -1040,13 +1040,19 @@ pub(crate) async fn apply_stellar_node(
 
     // 12. Service Mesh Configuration (Istio/Linkerd)
     if node.spec.service_mesh.is_some() {
-        apply_or_emit(ctx, node, ActionType::Update, "Service Mesh (Istio/Linkerd)", async {
-            service_mesh::ensure_peer_authentication(client, node).await?;
-            service_mesh::ensure_destination_rule(client, node).await?;
-            service_mesh::ensure_virtual_service(client, node).await?;
-            service_mesh::ensure_request_authentication(client, node).await?;
-            Ok(())
-        })
+        apply_or_emit(
+            ctx,
+            node,
+            ActionType::Update,
+            "Service Mesh (Istio/Linkerd)",
+            async {
+                service_mesh::ensure_peer_authentication(client, node).await?;
+                service_mesh::ensure_destination_rule(client, node).await?;
+                service_mesh::ensure_virtual_service(client, node).await?;
+                service_mesh::ensure_request_authentication(client, node).await?;
+                Ok(())
+            },
+        )
         .await?;
     }
 

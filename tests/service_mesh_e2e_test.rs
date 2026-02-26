@@ -12,8 +12,8 @@
 #[cfg(test)]
 mod tests {
     use stellar_k8s::crd::{
-        CircuitBreakerConfig, IstioMeshConfig, MtlsMode, RetryConfig, ServiceMeshConfig,
-        StellarNode, StellarNodeSpec, StellarNetwork, ValidatorConfig, NodeType,
+        CircuitBreakerConfig, IstioMeshConfig, MtlsMode, NodeType, RetryConfig, ServiceMeshConfig,
+        StellarNetwork, StellarNode, StellarNodeSpec, ValidatorConfig,
     };
 
     /// Helper to create a test StellarNode with Istio configuration
@@ -115,7 +115,10 @@ mod tests {
     #[test]
     fn test_linkerd_config_validation() {
         let node = create_test_node_with_linkerd();
-        assert!(node.spec.validate().is_ok(), "Linkerd config should be valid");
+        assert!(
+            node.spec.validate().is_ok(),
+            "Linkerd config should be valid"
+        );
     }
 
     #[test]

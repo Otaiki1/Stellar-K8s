@@ -746,7 +746,10 @@ fn validate_service_mesh(
         if !["allow", "deny", "audit"].contains(&linkerd.policy_mode.as_str()) {
             errors.push(SpecValidationError::new(
                 "spec.serviceMesh.linkerd.policyMode",
-                format!("policyMode must be one of: allow, deny, audit (got: {})", linkerd.policy_mode),
+                format!(
+                    "policyMode must be one of: allow, deny, audit (got: {})",
+                    linkerd.policy_mode
+                ),
                 "Set spec.serviceMesh.linkerd.policyMode to one of: allow, deny, or audit.",
             ));
         }

@@ -70,19 +70,14 @@ fn default_linkerd_policy_mode() -> String {
 }
 
 /// mTLS mode enumeration for Istio
-#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Default)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum MtlsMode {
     /// All traffic must be encrypted with mTLS
+    #[default]
     Strict,
     /// Both encrypted and unencrypted traffic accepted (migration mode)
     Permissive,
-}
-
-impl Default for MtlsMode {
-    fn default() -> Self {
-        MtlsMode::Strict
-    }
 }
 
 impl std::fmt::Display for MtlsMode {

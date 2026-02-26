@@ -233,12 +233,16 @@ pub async fn ensure_virtual_service(client: &Client, node: &StellarNode) -> Resu
         retries["perTryTimeout"] = json!(format!("{}ms", retry_cfg.backoff_ms));
 
         if !retry_cfg.retryable_status_codes.is_empty() {
-            let status_codes = retry_cfg.retryable_status_codes
+            let status_codes = retry_cfg
+                .retryable_status_codes
                 .iter()
                 .map(|c| c.to_string())
                 .collect::<Vec<_>>()
                 .join(",");
-            retries["retryOn"] = json!(format!("5xx,reset,connect-failure,retriable-4xx,{}", status_codes));
+            retries["retryOn"] = json!(format!(
+                "5xx,reset,connect-failure,retriable-4xx,{}",
+                status_codes
+            ));
         }
     }
 
@@ -441,6 +445,10 @@ pub async fn delete_service_mesh_resources(client: &Client, node: &StellarNode) 
         let _ = api.delete(&resource_name, &Default::default()).await;
     }
 
-    info!("Deleted service mesh resources for {}/{}", namespace, node.name_any());
+    info!(
+        "Deleted service mesh resources for {}/{}",
+        namespace,
+        node.name_any()
+    );
     Ok(())
 }
