@@ -108,7 +108,7 @@ rand_distr = "0.5.1"
 cron = "0.15"
 flate2 = "1"
 async-trait = "0.1"
-sqlx = { version = "0.8.6", features = ["runtime-tokio", "postgres", "chrono"] }
+sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio", "postgres", "chrono"] }
 
 [build-dependencies]
 chrono = "0.4"
