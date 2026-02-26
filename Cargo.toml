@@ -108,6 +108,9 @@ rand_distr = "0.5.1"
 cron = "0.15"
 flate2 = "1"
 async-trait = "0.1"
+pqcrypto-kyber = "0.8.1"
+pqcrypto-dilithium = "0.5.0"
+pqcrypto-traits = "0.3.5"
 
 [build-dependencies]
 chrono = "0.4"
@@ -139,3 +142,7 @@ path = "src/main.rs"
 [[bin]]
 name = "kubectl-stellar"
 path = "src/kubectl_plugin.rs"
+
+[[bin]]
+name = "pqc-sidecar"
+path = "src/bin/pqc_sidecar.rs"
